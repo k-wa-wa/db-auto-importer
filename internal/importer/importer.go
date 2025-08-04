@@ -192,14 +192,21 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 
 			convertedVal, err := convertToDBType(csvVal, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
-				return fmt.Errorf("failed to convert value for column %s (%s): %w", colInfo.ColumnName, colInfo.DataType, err)
+				log.Printf("Warning: Failed to convert value '%s' for column %s (%s) in table %s: %v. Skipping this value.\n", csvVal, colInfo.ColumnName, colInfo.DataType, dbInfo.TableName, err)
+				// Depending on desired behavior, you might set convertedVal to nil or a default zero value
+				// For now, we'll set it to nil, which will be handled by the database as NULL if the column is nullable.
+				// If the column is NOT NULL, the database insert will likely fail, which is caught below.
+				values[colIdx] = nil
+			} else {
+				values[colIdx] = convertedVal
 			}
-			values[colIdx] = convertedVal
 		}
 
 		_, err = stmt.Exec(values...)
 		if err != nil {
-			return fmt.Errorf("failed to insert record into %s: %w", dbInfo.TableName, err)
+			// Log the error and continue to the next record instead of returning
+			log.Printf("Error inserting record into %s from file %s: %v. Record: %v\n", dbInfo.TableName, filePath, err, record)
+			continue // Continue to the next record
 		}
 	}
 
@@ -236,13 +243,15 @@ func (i *Importer) ensureParentRecordExists(tx *sql.Tx, parentDBInfo database.DB
 			// Use the foreignKeyValue for the foreign key column
 			val, err = convertToDBType(foreignKeyValue, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
-				return fmt.Errorf("failed to convert foreign key value '%s' for column %s (%s): %w", foreignKeyValue, colInfo.ColumnName, colInfo.DataType, err)
+				log.Printf("Warning: Failed to convert foreign key value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", foreignKeyValue, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
+				val = nil // Use nil if conversion fails
 			}
 		} else {
 			// Use default values for other columns
 			val, err = convertToDBType("", colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
-				return fmt.Errorf("failed to get default value for column %s (%s): %w", colInfo.ColumnName, colInfo.DataType, err)
+				log.Printf("Warning: Failed to get default value for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
+				val = nil // Use nil if conversion fails
 			}
 		}
 		parentValues = append(parentValues, val)
