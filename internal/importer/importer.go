@@ -54,7 +54,8 @@ func (i *Importer) Close() error {
 }
 
 // ImportCSVFiles reads CSV files from the given directory and imports them into the database.
-func (i *Importer) ImportCSVFiles(csvDir string) error {
+// The 'hasHeader' parameter indicates whether all CSV files in the directory have a header row.
+func (i *Importer) ImportCSVFiles(csvDir string, hasHeader bool) error {
 	csvFilesMap := make(map[string]string) // Map table name to CSV file path
 	files, err := getCSVFiles(csvDir)
 	if err != nil {
@@ -89,8 +90,8 @@ func (i *Importer) ImportCSVFiles(csvDir string) error {
 		}
 
 		fmt.Printf("Importing data from %s into table %s...\n", filePath, tableName)
-		// For now, assume CSVs always have headers. This can be made configurable later.
-		if err := i.ImportSingleCSV(filePath, dbInfo, true); err != nil {
+		// Pass the hasHeader flag directly to ImportSingleCSV
+		if err := i.ImportSingleCSV(filePath, dbInfo, hasHeader); err != nil {
 			return fmt.Errorf("failed to import %s: %w", filePath, err)
 		}
 		fmt.Printf("Finished importing %s.\n", filePath)
@@ -132,7 +133,8 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 			}
 		}
 	} else {
-		// If no header, assume CSV columns are in the same order as DB columns
+		// If no header, assume CSV columns are in the same order as DB columns based on dbInfo.Columns order.
+		// This creates a positional mapping from DB column name to its expected CSV index.
 		for idx, colInfo := range dbInfo.Columns {
 			columnMap[colInfo.ColumnName] = idx
 		}
@@ -163,16 +165,12 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 		values := make([]interface{}, len(dbInfo.Columns))
 		for colIdx, colInfo := range dbInfo.Columns {
 			csvVal := ""
+			// Determine the CSV value based on the column mapping.
+			// If the column is not found in the map (only possible if hasHeader is true and CSV is missing a DB column),
+			// or if the mapped index is out of bounds for the current record (CSV has fewer columns than expected),
+			// csvVal remains an empty string, which convertToDBType will handle as a missing/default value.
 			if idx, ok := columnMap[colInfo.ColumnName]; ok && idx < len(record) {
 				csvVal = record[idx]
-			} else if !ok && !hasHeader {
-				// If no header, and column not found in map (shouldn't happen if columnMap is populated correctly by index)
-				// This case might occur if the CSV has fewer columns than the DB table.
-				// In such cases, we should use default/null for missing columns.
-				// For now, let's assume the CSV has at least as many columns as the DB expects for mapped columns.
-				// If the column is not in the map, it means it's not expected from CSV, so it should be handled by default/null.
-				// This logic needs to be robust for cases where CSV has fewer columns than DB.
-				// For now, if columnMap doesn't contain the column, csvVal remains empty, and convertToDBType handles default/null.
 			}
 
 			// Check for foreign key constraints and ensure parent records exist

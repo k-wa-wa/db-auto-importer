@@ -214,7 +214,7 @@ func TestImportCSVFiles(t *testing.T) {
 	defer importer.Close()
 
 	csvDir := "testdata"
-	err = importer.ImportCSVFiles(csvDir)
+	err = importer.ImportCSVFiles(csvDir, true) // Assuming CSVs in testdata generally have headers for this test
 	if err != nil {
 		t.Fatalf("Failed to import CSV files: %v", err)
 	}
