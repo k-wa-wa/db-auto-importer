@@ -344,7 +344,7 @@ func convertToDBType(csvValue, dataType string, isNullable bool, columnDefault s
 	if csvValue == "" && !isNullable {
 		// If not nullable and no default, provide a sensible default based on type
 		switch dataType {
-		case "text", "character varying", "varchar", "char":
+		case "text", "character varying", "varchar", "char", "character":
 			return "", nil
 		case "integer", "smallint", "bigint", "numeric", "decimal", "real", "double precision":
 			return 0, nil
@@ -358,7 +358,7 @@ func convertToDBType(csvValue, dataType string, isNullable bool, columnDefault s
 	}
 
 	switch dataType {
-	case "text", "character varying", "varchar", "char":
+	case "text", "character varying", "varchar", "char", "character":
 		return csvValue, nil
 	case "integer", "smallint", "bigint":
 		val, err := strconv.ParseInt(csvValue, 10, 64)
