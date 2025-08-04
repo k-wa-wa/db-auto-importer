@@ -89,7 +89,8 @@ func (i *Importer) ImportCSVFiles(csvDir string) error {
 		}
 
 		fmt.Printf("Importing data from %s into table %s...\n", filePath, tableName)
-		if err := i.importSingleCSV(filePath, dbInfo); err != nil {
+		// For now, assume CSVs always have headers. This can be made configurable later.
+		if err := i.ImportSingleCSV(filePath, dbInfo, true); err != nil {
 			return fmt.Errorf("failed to import %s: %w", filePath, err)
 		}
 		fmt.Printf("Finished importing %s.\n", filePath)
@@ -98,7 +99,7 @@ func (i *Importer) ImportCSVFiles(csvDir string) error {
 	return nil
 }
 
-func (i *Importer) importSingleCSV(filePath string, dbInfo database.DBInfo) error {
+func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasHeader bool) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to open CSV file %s: %w", filePath, err)
@@ -106,25 +107,34 @@ func (i *Importer) importSingleCSV(filePath string, dbInfo database.DBInfo) erro
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	csvHeader, err := reader.Read() // Read header row
-	if err != nil {
-		return fmt.Errorf("failed to read CSV header from %s: %w", filePath, err)
+	var csvHeader []string
+	if hasHeader {
+		csvHeader, err = reader.Read() // Read header row
+		if err != nil {
+			return fmt.Errorf("failed to read CSV header from %s: %w", filePath, err)
+		}
 	}
 
-	// Map CSV headers to database columns
+	// Map CSV columns to database columns
 	columnMap := make(map[string]int) // Maps DB column name to CSV column index
-	for _, colInfo := range dbInfo.Columns {
-		found := false
-		for csvIdx, csvColName := range csvHeader {
-			if strings.EqualFold(colInfo.ColumnName, csvColName) {
-				columnMap[colInfo.ColumnName] = csvIdx
-				found = true
-				break
+	if hasHeader {
+		for _, colInfo := range dbInfo.Columns {
+			found := false
+			for csvIdx, csvColName := range csvHeader {
+				if strings.EqualFold(colInfo.ColumnName, csvColName) {
+					columnMap[colInfo.ColumnName] = csvIdx
+					found = true
+					break
+				}
+			}
+			if !found {
+				fmt.Printf("Warning: Column '%s' in table '%s' not found in CSV header. Will use default/null.\n", colInfo.ColumnName, dbInfo.TableName)
 			}
 		}
-		if !found {
-			// TODO: Handle missing CSV columns for non-nullable fields without default values
-			fmt.Printf("Warning: Column '%s' in table '%s' not found in CSV header. Will use default/null.\n", colInfo.ColumnName, dbInfo.TableName)
+	} else {
+		// If no header, assume CSV columns are in the same order as DB columns
+		for idx, colInfo := range dbInfo.Columns {
+			columnMap[colInfo.ColumnName] = idx
 		}
 	}
 
@@ -134,7 +144,7 @@ func (i *Importer) importSingleCSV(filePath string, dbInfo database.DBInfo) erro
 	}
 	defer tx.Rollback() // Rollback on error
 
-	stmt, err := prepareInsertStatement(tx, dbInfo, columnMap)
+	stmt, err := prepareInsertStatement(tx, dbInfo) // columnMap is no longer needed here
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert statement for table %s: %w", dbInfo.TableName, err)
 	}
@@ -155,26 +165,30 @@ func (i *Importer) importSingleCSV(filePath string, dbInfo database.DBInfo) erro
 			csvVal := ""
 			if idx, ok := columnMap[colInfo.ColumnName]; ok && idx < len(record) {
 				csvVal = record[idx]
+			} else if !ok && !hasHeader {
+				// If no header, and column not found in map (shouldn't happen if columnMap is populated correctly by index)
+				// This case might occur if the CSV has fewer columns than the DB table.
+				// In such cases, we should use default/null for missing columns.
+				// For now, let's assume the CSV has at least as many columns as the DB expects for mapped columns.
+				// If the column is not in the map, it means it's not expected from CSV, so it should be handled by default/null.
+				// This logic needs to be robust for cases where CSV has fewer columns than DB.
+				// For now, if columnMap doesn't contain the column, csvVal remains empty, and convertToDBType handles default/null.
 			}
 
 			// Check for foreign key constraints and ensure parent records exist
 			for _, fk := range dbInfo.ForeignKeys {
 				if fk.ColumnName == colInfo.ColumnName {
-					// This column is a foreign key. Check if the parent record exists.
 					parentDBInfo, ok := i.DBSchema[fk.ForeignTableName]
 					if !ok {
 						return fmt.Errorf("foreign table %s not found in schema info for foreign key %s", fk.ForeignTableName, fk.ConstraintName)
 					}
 
-					// The value of the foreign key in the CSV record
-					fkValue := csvVal // This is the value from the current CSV record for the FK column
-
-					// Ensure the parent record exists
+					fkValue := csvVal
 					err := i.ensureParentRecordExists(tx, parentDBInfo, fk.ForeignColumnName, fkValue)
 					if err != nil {
 						return fmt.Errorf("failed to ensure parent record exists for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValue, err)
 					}
-					break // Found the FK for this column, move to next column
+					break
 				}
 			}
 
@@ -262,12 +276,10 @@ func (i *Importer) parentRecordExists(tx *sql.Tx, dbInfo database.DBInfo, column
 	return exists, nil
 }
 
-func prepareInsertStatement(tx *sql.Tx, dbInfo database.DBInfo, columnMap map[string]int) (*sql.Stmt, error) {
+func prepareInsertStatement(tx *sql.Tx, dbInfo database.DBInfo) (*sql.Stmt, error) {
 	var cols []string
 	var placeholders []string
 	for i, colInfo := range dbInfo.Columns {
-		// Only include columns that are present in the CSV or have a default value/are nullable
-		// For now, include all DB columns and rely on convertToDBType for defaults.
 		cols = append(cols, colInfo.ColumnName)
 		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
 	}

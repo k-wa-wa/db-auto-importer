@@ -260,3 +260,80 @@ func TestImportCSVFiles(t *testing.T) {
 		t.Errorf("Expected order 1 to be user_id 1 and product Laptop, got user_id %d and product %s", userId, product)
 	}
 }
+
+func TestImportCSVFilesNoHeader(t *testing.T) {
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName)
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		t.Fatalf("Failed to open database connection: %v", err)
+	}
+	defer db.Close()
+
+	// Clean up tables before import test
+	_, err = db.Exec(`
+		DROP TABLE IF EXISTS users CASCADE;
+	`)
+	if err != nil {
+		t.Fatalf("Failed to clean up tables: %v", err)
+	}
+
+	// Create only the users table for this test
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS users (
+			id SERIAL PRIMARY KEY,
+			name VARCHAR(100) NOT NULL,
+			email VARCHAR(100) UNIQUE
+		);
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create users table: %v", err)
+	}
+	log.Println("Users table created successfully for no-header test.")
+
+	schemaInfo, err := database.GetSchemaInfo(connStr)
+	if err != nil {
+		t.Fatalf("Failed to get schema info: %v", err)
+	}
+
+	importer, err := importerPackage.NewImporter(schemaInfo, connStr)
+	if err != nil {
+		t.Fatalf("Failed to create importer: %v", err)
+	}
+	defer importer.Close()
+
+	// Manually import the no-header CSV, specifying hasHeader as false
+	filePath := "testdata/users_no_header.csv"
+	dbInfo, ok := schemaInfo["users"]
+	if !ok {
+		t.Fatalf("users table not found in schema info for no-header test")
+	}
+
+	fmt.Printf("Importing data from %s into table %s (no header)...\n", filePath, dbInfo.TableName)
+	err = importer.ImportSingleCSV(filePath, dbInfo, false) // Explicitly set hasHeader to false
+	if err != nil {
+		t.Fatalf("Failed to import no-header CSV file: %v", err)
+	}
+	fmt.Printf("Finished importing %s (no header).\n", filePath)
+
+	// Verify data in users table
+	var userCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+	if err != nil {
+		t.Fatalf("Failed to query users count after no-header import: %v", err)
+	}
+	if userCount != 2 {
+		t.Errorf("Expected 2 users from no-header CSV, got %d", userCount)
+	}
+
+	var name string
+	var email string
+	err = db.QueryRow("SELECT name, email FROM users WHERE id = 1").Scan(&name, &email)
+	if err != nil {
+		t.Fatalf("Failed to query user 1 from no-header import: %v", err)
+	}
+	if name != "AliceNoHeader" || email != "alice_no_header@example.com" {
+		t.Errorf("Expected user 1 to be AliceNoHeader/alice_no_header@example.com, got %s/%s", name, email)
+	}
+}
