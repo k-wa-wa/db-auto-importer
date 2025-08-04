@@ -302,7 +302,7 @@ func (i *Importer) ensureParentRecordExists(db *sql.DB, parentDBInfo database.DB
 		}
 	}
 
-	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING",
 		parentDBInfo.TableName,
 		strings.Join(parentCols, ", "),
 		strings.Join(parentPlaceholders, ", "),
