@@ -3,14 +3,18 @@ package importer
 import (
 	"database/sql"
 	"encoding/csv"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"crypto/rand"
 
 	"db-auto-importer/internal/database"
 	"db-auto-importer/internal/graph"
@@ -232,12 +236,25 @@ func (i *Importer) ensureParentRecordExists(db *sql.DB, parentDBInfo database.DB
 	parentPlaceholders := make([]string, 0, len(parentDBInfo.Columns))
 	parentValues := make([]interface{}, len(parentDBInfo.Columns)) // Initialize with correct size
 
-	// First, populate parentValues with default/provided values
+	// Create a map for quick lookup of unique key columns (including primary keys)
+	uniqueColsMap := make(map[string]bool)
+	for _, pkCol := range parentDBInfo.PrimaryKeyColumns {
+		uniqueColsMap[pkCol] = true
+	}
+	for _, ukCols := range parentDBInfo.UniqueKeyColumns {
+		if len(ukCols) == 1 { // Only consider single-column unique constraints for random generation
+			uniqueColsMap[ukCols[0]] = true
+		}
+	}
+
+	// First, populate parentValues with default/provided/random values
 	for colIdx, colInfo := range parentDBInfo.Columns {
 		parentCols = append(parentCols, colInfo.ColumnName)
 		parentPlaceholders = append(parentPlaceholders, fmt.Sprintf("$%d", colIdx+1))
 
 		var val interface{}
+		var err error
+
 		if colInfo.ColumnName == foreignColumnName {
 			// Use the foreignKeyValue for the foreign key column that triggered this call
 			val, err = convertToDBType(foreignKeyValue, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
@@ -245,8 +262,22 @@ func (i *Importer) ensureParentRecordExists(db *sql.DB, parentDBInfo database.DB
 				log.Printf("Warning: Failed to convert foreign key value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", foreignKeyValue, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
 				val = nil // Use nil if conversion fails
 			}
+		} else if colInfo.ColumnDefault.Valid {
+			// Use the explicit column default if available
+			val, err = convertToDBType(colInfo.ColumnDefault.String, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
+			if err != nil {
+				log.Printf("Warning: Failed to convert default value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnDefault.String, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
+				val = nil
+			}
+		} else if uniqueColsMap[colInfo.ColumnName] && !colInfo.IsNullable {
+			// If it's a unique column (PK or UK) and not nullable, generate a random value
+			val, err = generateRandomValue(colInfo.DataType)
+			if err != nil {
+				log.Printf("Warning: Failed to generate random value for unique column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
+				val = nil // Fallback to nil if random generation fails
+			}
 		} else {
-			// Use default values for other columns
+			// For other columns, use default behavior (empty string for convertToDBType)
 			val, err = convertToDBType("", colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
 				log.Printf("Warning: Failed to get default value for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
@@ -394,16 +425,20 @@ func convertToDBType(csvValue, dataType string, isNullable bool, columnDefault s
 		csvValue = columnDefault.String // Use default value if CSV is empty and default exists
 	}
 	if csvValue == "" && !isNullable {
-		// If not nullable and no default, provide a sensible default based on type
+		// If not nullable and no default, provide a sensible default based on type.
+		// This part is now handled by generateRandomValue if it's a unique key.
+		// If not a unique key, we still need a default.
 		switch dataType {
 		case "text", "character varying", "varchar", "char", "character":
 			return "", nil
-		case "integer", "smallint", "bigint", "numeric", "decimal", "real", "double precision":
+		case "integer", "smallint", "bigint":
 			return 0, nil
+		case "numeric", "decimal", "real", "double precision":
+			return 0.0, nil
 		case "boolean":
 			return false, nil
 		case "date", "timestamp without time zone", "timestamp with time zone":
-			return time.Time{}, nil // Or a specific zero value
+			return time.Time{}, nil // Zero value for time
 		default:
 			return nil, fmt.Errorf("non-nullable column with no default and empty CSV value for type %s", dataType)
 		}
@@ -461,6 +496,62 @@ func convertToDBType(csvValue, dataType string, isNullable bool, columnDefault s
 		// or return an error if strict type checking is desired.
 		log.Printf("Warning: Unsupported data type '%s' for value '%s'. Passing as string.\n", dataType, csvValue)
 		return csvValue, nil
+	}
+}
+
+// generateRandomValue generates a random value suitable for database insertion based on data type.
+// This is used for unique columns (PK/UK) that don't have a default value and are not the FK being inserted.
+func generateRandomValue(dataType string) (interface{}, error) {
+	switch dataType {
+	case "text", "character varying", "varchar", "char", "character":
+		b := make([]byte, 16) // 16 bytes for a 32-char hex string
+		_, err := rand.Read(b)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate random bytes for string: %w", err)
+		}
+		return hex.EncodeToString(b), nil
+	case "integer", "smallint", "bigint":
+		// Generate a random int64
+		max := big.NewInt(int64(^uint64(0) >> 1)) // Max int64
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate random integer: %w", err)
+		}
+		return n.Int64(), nil
+	case "numeric", "decimal", "real", "double precision":
+		// Generate a random float64 between 0 and 1, then scale it
+		// This is a simple approach; for true randomness or specific ranges, more complex logic might be needed.
+		max := big.NewInt(1e9) // For a reasonable range of floats
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate random float: %w", err)
+		}
+		return float64(n.Int64()) / float64(max.Int64()), nil
+	case "boolean":
+		// Random boolean
+		b := make([]byte, 1)
+		_, err := rand.Read(b)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate random boolean: %w", err)
+		}
+		return b[0]%2 == 0, nil
+	case "date", "timestamp without time zone", "timestamp with time zone":
+		// Generate a random time within a reasonable range (e.g., last 10 years)
+		now := time.Now()
+		tenYearsAgo := now.AddDate(-10, 0, 0)
+		diff := now.Sub(tenYearsAgo)
+		randomSeconds := big.NewInt(0)
+		if diff.Seconds() > 0 {
+			maxSeconds := big.NewInt(int64(diff.Seconds()))
+			var err error
+			randomSeconds, err = rand.Int(rand.Reader, maxSeconds)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate random time: %w", err)
+			}
+		}
+		return tenYearsAgo.Add(time.Duration(randomSeconds.Int64()) * time.Second), nil
+	default:
+		return nil, fmt.Errorf("unsupported data type for random value generation: %s", dataType)
 	}
 }
 
