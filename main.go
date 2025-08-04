@@ -16,11 +16,12 @@ func main() {
 	dbConnStr := flag.String("db", "postgresql://user:password@localhost:5432/dbname?sslmode=disable", "Database connection string")
 	csvDir := flag.String("csv", "./testdata", "Directory containing CSV files")
 	hasHeader := flag.Bool("header", true, "Set to false if CSV files do not have a header row")
+	dbSchemaName := flag.String("schema", "public", "Database schema name to import into (e.g., 'public')")
 
 	flag.Parse() // Parse the command-line arguments
 
 	// 1. Database Schema Detection
-	schemaInfo, err := database.GetSchemaInfo(*dbConnStr)
+	schemaInfo, err := database.GetSchemaInfo(*dbConnStr, *dbSchemaName)
 	if err != nil {
 		log.Fatalf("Error getting database schema info: %v", err)
 	}

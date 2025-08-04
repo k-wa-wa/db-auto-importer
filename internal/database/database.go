@@ -34,8 +34,8 @@ type ForeignKeyInfo struct {
 	ForeignColumnName string
 }
 
-// GetSchemaInfo connects to the PostgreSQL database and retrieves schema information.
-func GetSchemaInfo(connStr string) (map[string]DBInfo, error) {
+// GetSchemaInfo connects to the PostgreSQL database and retrieves schema information for a given schema name.
+func GetSchemaInfo(connStr string, schemaName string) (map[string]DBInfo, error) {
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
@@ -46,11 +46,11 @@ func GetSchemaInfo(connStr string) (map[string]DBInfo, error) {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
-	log.Println("Successfully connected to the database.")
+	log.Printf("Successfully connected to the database. Retrieving schema for '%s'.\n", schemaName)
 
-	tables, err := getTableNames(db)
+	tables, err := getTableNames(db, schemaName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get table names: %w", err)
+		return nil, fmt.Errorf("failed to get table names from schema '%s': %w", schemaName, err)
 	}
 
 	schemaInfo := make(map[string]DBInfo)
@@ -84,14 +84,14 @@ func GetSchemaInfo(connStr string) (map[string]DBInfo, error) {
 	return schemaInfo, nil
 }
 
-func getTableNames(db *sql.DB) ([]string, error) {
+func getTableNames(db *sql.DB, schemaName string) ([]string, error) {
 	rows, err := db.Query(`
 		SELECT table_name
 		FROM information_schema.tables
-		WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
-	`)
+		WHERE table_schema = $1 AND table_type = 'BASE TABLE';
+	`, schemaName)
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, fmt.Errorf("query failed for schema '%s': %w", schemaName, err)
 	}
 	defer rows.Close()
 
@@ -107,14 +107,17 @@ func getTableNames(db *sql.DB) ([]string, error) {
 }
 
 func getColumnInfo(db *sql.DB, tableName string) ([]ColumnInfo, error) {
+	// Note: This function implicitly uses the 'public' schema for now,
+	// but the schemaName parameter from GetSchemaInfo could be passed down if needed.
+	// For simplicity, assuming columns are always in 'public' or the default search path.
 	rows, err := db.Query(`
 		SELECT column_name, data_type, is_nullable, column_default
 		FROM information_schema.columns
-		WHERE table_schema = 'public' AND table_name = $1
+		WHERE table_name = $1
 		ORDER BY ordinal_position;
 	`, tableName)
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
 	}
 	defer rows.Close()
 

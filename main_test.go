@@ -105,7 +105,7 @@ func TestGetSchemaInfo(t *testing.T) {
 		t.Fatalf("Failed to create test tables: %v", err)
 	}
 
-	schemaInfo, err := database.GetSchemaInfo(connStr)
+	schemaInfo, err := database.GetSchemaInfo(connStr, "public") // Assuming "public" schema for tests
 	if err != nil {
 		t.Fatalf("Failed to get schema info: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestImportCSVFiles(t *testing.T) {
 		t.Fatalf("Failed to create test tables: %v", err)
 	}
 
-	schemaInfo, err := database.GetSchemaInfo(connStr)
+	schemaInfo, err := database.GetSchemaInfo(connStr, "public") // Assuming "public" schema for tests
 	if err != nil {
 		t.Fatalf("Failed to get schema info: %v", err)
 	}
@@ -292,16 +292,16 @@ func TestImportCSVFilesNoHeader(t *testing.T) {
 	}
 	log.Println("Users table created successfully for no-header test.")
 
-	schemaInfo, err := database.GetSchemaInfo(connStr)
+	schemaInfo, err := database.GetSchemaInfo(connStr, "public") // Assuming "public" schema for tests
 	if err != nil {
 		t.Fatalf("Failed to get schema info: %v", err)
 	}
 
-	importer, err := importerPackage.NewImporter(schemaInfo, connStr)
+	importerInstance, err := importerPackage.NewImporter(schemaInfo, connStr)
 	if err != nil {
 		t.Fatalf("Failed to create importer: %v", err)
 	}
-	defer importer.Close()
+	defer importerInstance.Close()
 
 	// Manually import the no-header CSV, specifying hasHeader as false
 	filePath := "testdata/users_no_header.csv"
@@ -311,7 +311,7 @@ func TestImportCSVFilesNoHeader(t *testing.T) {
 	}
 
 	fmt.Printf("Importing data from %s into table %s (no header)...\n", filePath, dbInfo.TableName)
-	err = importer.ImportSingleCSV(filePath, dbInfo, false) // Explicitly set hasHeader to false
+	err = importerInstance.ImportSingleCSV(filePath, dbInfo, false) // Explicitly set hasHeader to false
 	if err != nil {
 		t.Fatalf("Failed to import no-header CSV file: %v", err)
 	}
