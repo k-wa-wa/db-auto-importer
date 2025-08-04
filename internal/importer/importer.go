@@ -230,15 +230,16 @@ func (i *Importer) ensureParentRecordExists(db *sql.DB, parentDBInfo database.DB
 	// Prepare values for the new parent record
 	parentCols := make([]string, 0, len(parentDBInfo.Columns))
 	parentPlaceholders := make([]string, 0, len(parentDBInfo.Columns))
-	parentValues := make([]interface{}, 0, len(parentDBInfo.Columns))
+	parentValues := make([]interface{}, len(parentDBInfo.Columns)) // Initialize with correct size
 
-	for idx, colInfo := range parentDBInfo.Columns {
+	// First, populate parentValues with default/provided values
+	for colIdx, colInfo := range parentDBInfo.Columns {
 		parentCols = append(parentCols, colInfo.ColumnName)
-		parentPlaceholders = append(parentPlaceholders, fmt.Sprintf("$%d", idx+1))
+		parentPlaceholders = append(parentPlaceholders, fmt.Sprintf("$%d", colIdx+1))
 
 		var val interface{}
 		if colInfo.ColumnName == foreignColumnName {
-			// Use the foreignKeyValue for the foreign key column
+			// Use the foreignKeyValue for the foreign key column that triggered this call
 			val, err = convertToDBType(foreignKeyValue, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
 				log.Printf("Warning: Failed to convert foreign key value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", foreignKeyValue, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
@@ -252,7 +253,53 @@ func (i *Importer) ensureParentRecordExists(db *sql.DB, parentDBInfo database.DB
 				val = nil // Use nil if conversion fails
 			}
 		}
-		parentValues = append(parentValues, val)
+		parentValues[colIdx] = val
+	}
+
+	// Recursively ensure parent records for this parentDBInfo's foreign keys
+	for _, fk := range parentDBInfo.ForeignKeys {
+		// Find the value for this foreign key from the prepared parentValues
+		fkColIdx := -1
+		for idx, colInfo := range parentDBInfo.Columns {
+			if colInfo.ColumnName == fk.ColumnName {
+				fkColIdx = idx
+				break
+			}
+		}
+
+		if fkColIdx != -1 {
+			fkValueInterface := parentValues[fkColIdx] // This is an interface{}
+			if fkValueInterface != nil {
+				// Convert the interface{} value back to a string suitable for the recursive call
+				var fkValueStr string
+				switch v := fkValueInterface.(type) {
+				case int64:
+					fkValueStr = strconv.FormatInt(v, 10)
+				case float64:
+					fkValueStr = strconv.FormatFloat(v, 'f', -1, 64)
+				case bool:
+					fkValueStr = strconv.FormatBool(v)
+				case time.Time:
+					fkValueStr = v.Format(time.RFC3339) // Or another suitable format
+				case string:
+					fkValueStr = v
+				default:
+					// Fallback for other types, might need more specific handling
+					fkValueStr = fmt.Sprintf("%v", v)
+				}
+
+				parentOfParentDBInfo, ok := i.DBSchema[fk.ForeignTableName]
+				if !ok {
+					return fmt.Errorf("foreign table %s not found in schema info for foreign key %s during recursive ensureParent", fk.ForeignTableName, fk.ConstraintName)
+				}
+				err := i.ensureParentRecordExists(db, parentOfParentDBInfo, fk.ForeignColumnName, fkValueStr)
+				if err != nil {
+					return fmt.Errorf("failed to recursively ensure parent record for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValueStr, err)
+				}
+			}
+		} else {
+			log.Printf("Warning: Foreign key column '%s' not found in parentDBInfo.Columns for table '%s'. Cannot recursively ensure its parent.\n", fk.ColumnName, parentDBInfo.TableName)
+		}
 	}
 
 	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
