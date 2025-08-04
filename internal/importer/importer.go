@@ -175,6 +175,11 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 					}
 
 					fkValue := csvVal
+					// Skip foreign key check if the value is empty (null)
+					if fkValue == "" {
+						continue
+					}
+
 					err := i.ensureParentRecordExists(i.db, parentDBInfo, fk.ForeignColumnName, fkValue)
 					if err != nil {
 						return fmt.Errorf("failed to ensure parent record exists for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValue, err)
