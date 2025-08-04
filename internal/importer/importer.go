@@ -1,7 +1,6 @@
 package importer
 
 import (
-	"context"
 	"database/sql"
 	"encoding/csv"
 	"fmt"
@@ -140,13 +139,7 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 		}
 	}
 
-	tx, err := i.db.BeginTx(context.Background(), nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback() // Rollback on error
-
-	stmt, err := prepareInsertStatement(tx, dbInfo) // columnMap is no longer needed here
+	stmt, err := prepareInsertStatement(i.db, dbInfo)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert statement for table %s: %w", dbInfo.TableName, err)
 	}
@@ -182,7 +175,7 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 					}
 
 					fkValue := csvVal
-					err := i.ensureParentRecordExists(tx, parentDBInfo, fk.ForeignColumnName, fkValue)
+					err := i.ensureParentRecordExists(i.db, parentDBInfo, fk.ForeignColumnName, fkValue)
 					if err != nil {
 						return fmt.Errorf("failed to ensure parent record exists for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValue, err)
 					}
@@ -210,15 +203,15 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // ensureParentRecordExists checks if a record with the given foreignKeyValue exists in the parent table.
 // If not, it creates a new record in the parent table with default values and the provided foreignKeyValue
 // for the foreignColumnName.
-func (i *Importer) ensureParentRecordExists(tx *sql.Tx, parentDBInfo database.DBInfo, foreignColumnName, foreignKeyValue string) error {
+func (i *Importer) ensureParentRecordExists(db *sql.DB, parentDBInfo database.DBInfo, foreignColumnName, foreignKeyValue string) error {
 	// Check if the parent record already exists
-	exists, err := i.parentRecordExists(tx, parentDBInfo, foreignColumnName, foreignKeyValue)
+	exists, err := i.parentRecordExists(db, parentDBInfo, foreignColumnName, foreignKeyValue)
 	if err != nil {
 		return fmt.Errorf("failed to check parent record existence: %w", err)
 	}
@@ -264,7 +257,7 @@ func (i *Importer) ensureParentRecordExists(tx *sql.Tx, parentDBInfo database.DB
 	)
 	// TODO: Consider UPSERT for parent record creation if primary key might conflict
 
-	_, err = tx.Exec(insertQuery, parentValues...)
+	_, err = db.Exec(insertQuery, parentValues...)
 	if err != nil {
 		return fmt.Errorf("failed to insert parent record into %s: %w", parentDBInfo.TableName, err)
 	}
@@ -273,17 +266,17 @@ func (i *Importer) ensureParentRecordExists(tx *sql.Tx, parentDBInfo database.DB
 }
 
 // parentRecordExists checks if a record exists in the given table for a specific column and value.
-func (i *Importer) parentRecordExists(tx *sql.Tx, dbInfo database.DBInfo, columnName, value string) (bool, error) {
+func (i *Importer) parentRecordExists(db *sql.DB, dbInfo database.DBInfo, columnName, value string) (bool, error) {
 	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = $1)", dbInfo.TableName, columnName)
 	var exists bool
-	err := tx.QueryRow(query, value).Scan(&exists)
+	err := db.QueryRow(query, value).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check existence of record in %s for %s=%s: %w", dbInfo.TableName, columnName, value, err)
 	}
 	return exists, nil
 }
 
-func prepareInsertStatement(tx *sql.Tx, dbInfo database.DBInfo) (*sql.Stmt, error) {
+func prepareInsertStatement(db *sql.DB, dbInfo database.DBInfo) (*sql.Stmt, error) {
 	var cols []string
 	var placeholders []string
 	for i, colInfo := range dbInfo.Columns {
@@ -334,7 +327,7 @@ func prepareInsertStatement(tx *sql.Tx, dbInfo database.DBInfo) (*sql.Stmt, erro
 		)
 	}
 
-	stmt, err := tx.Prepare(query)
+	stmt, err := db.Prepare(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare statement: %w", err)
 	}
