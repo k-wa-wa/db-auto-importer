@@ -284,12 +284,48 @@ func prepareInsertStatement(tx *sql.Tx, dbInfo database.DBInfo) (*sql.Stmt, erro
 		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
 	}
 
-	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		dbInfo.TableName,
-		strings.Join(cols, ", "),
-		strings.Join(placeholders, ", "),
-	)
-	// TODO: Add UPSERT (ON CONFLICT DO UPDATE) logic here
+	// Create a map for quick lookup of primary key columns
+	pkMap := make(map[string]bool)
+	for _, pkCol := range dbInfo.PrimaryKeyColumns {
+		pkMap[pkCol] = true
+	}
+
+	var query string
+	if len(dbInfo.PrimaryKeyColumns) > 0 {
+		// Construct the ON CONFLICT DO UPDATE SET clause
+		var updateClauses []string
+		for _, colInfo := range dbInfo.Columns {
+			// Do not update primary key columns in the SET clause, as they are used for conflict resolution
+			if !pkMap[colInfo.ColumnName] {
+				updateClauses = append(updateClauses, fmt.Sprintf("%s = EXCLUDED.%s", colInfo.ColumnName, colInfo.ColumnName))
+			}
+		}
+
+		if len(updateClauses) > 0 {
+			query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+				dbInfo.TableName,
+				strings.Join(cols, ", "),
+				strings.Join(placeholders, ", "),
+				strings.Join(dbInfo.PrimaryKeyColumns, ", "),
+				strings.Join(updateClauses, ", "),
+			)
+		} else {
+			// If there are no non-primary key columns to update, just do nothing on conflict
+			query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING",
+				dbInfo.TableName,
+				strings.Join(cols, ", "),
+				strings.Join(placeholders, ", "),
+				strings.Join(dbInfo.PrimaryKeyColumns, ", "),
+			)
+		}
+	} else {
+		// No primary key defined, proceed with simple insert
+		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+			dbInfo.TableName,
+			strings.Join(cols, ", "),
+			strings.Join(placeholders, ", "),
+		)
+	}
 
 	stmt, err := tx.Prepare(query)
 	if err != nil {
