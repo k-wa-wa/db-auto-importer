@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv" // Added for string conversions
 	"strings"
 	"time" // For time.Time in EnsureParentRecordExists
 
@@ -358,14 +359,14 @@ func (p *PostgresDB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumn
 
 		if colInfo.ColumnName == foreignColumnName {
 			// Use the foreignKeyValue for the foreign key column that triggered this call
-			val, err = convertToDBType(foreignKeyValue, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
+			val, err = ConvertToDBType(foreignKeyValue, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
 				log.Printf("Warning: Failed to convert foreign key value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", foreignKeyValue, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
 				val = nil // Use nil if conversion fails
 			}
 		} else if colInfo.ColumnDefault.Valid {
 			// Use the explicit column default if available
-			val, err = convertToDBType(colInfo.ColumnDefault.String, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
+			val, err = ConvertToDBType(colInfo.ColumnDefault.String, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
 				log.Printf("Warning: Failed to convert default value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnDefault.String, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
 				val = nil
@@ -378,8 +379,8 @@ func (p *PostgresDB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumn
 				val = nil // Fallback to nil if random generation fails
 			}
 		} else {
-			// For other columns, use default behavior (empty string for convertToDBType)
-			val, err = convertToDBType("", colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
+			// For other columns, use default behavior (empty string for ConvertToDBType)
+			val, err = ConvertToDBType("", colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
 				log.Printf("Warning: Failed to get default value for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
 				val = nil // Use nil if conversion fails

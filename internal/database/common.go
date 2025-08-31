@@ -1,19 +1,19 @@
 package database
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"log"
 	"math/big"
-	"crypto/rand"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// convertToDBType converts a CSV string value to the appropriate Go type for database insertion.
-func convertToDBType(csvValue, dataType string, isNullable bool, columnDefault sql.NullString) (interface{}, error) {
+// ConvertToDBType converts a CSV string value to the appropriate Go type for database insertion.
+func ConvertToDBType(csvValue, dataType string, isNullable bool, columnDefault sql.NullString) (interface{}, error) {
 	if csvValue == "" && isNullable {
 		return nil, nil // Return nil for nullable empty strings
 	}

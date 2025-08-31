@@ -1,3 +1,6 @@
+//go:build ibm_db
+// +build ibm_db
+
 package database
 
 import (
@@ -16,8 +19,8 @@ type DB2DB struct {
 	db *sql.DB
 }
 
-// NewDB2DB creates a new DB2DB instance.
-func NewDB2DB(connStr string) (*DB2DB, error) {
+// newDB2Client creates a new DB2DB instance.
+func newDB2Client(connStr string) (DBClient, error) {
 	db, err := sql.Open("go_ibm_db", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
@@ -28,19 +31,6 @@ func NewDB2DB(connStr string) (*DB2DB, error) {
 	}
 	log.Println("Successfully connected to DB2 database.")
 	return &DB2DB{db: db}, nil
-}
-
-// GetDB returns the underlying *sql.DB connection.
-func (d *DB2DB) GetDB() *sql.DB {
-	return d.db
-}
-
-// Close closes the database connection.
-func (d *DB2DB) Close() error {
-	if d.db != nil {
-		return d.db.Close()
-	}
-	return nil
 }
 
 // GetSchemaInfo retrieves schema information for a given schema name from DB2.
@@ -209,7 +199,7 @@ func (d *DB2DB) getForeignKeyInfo(tableName, schemaName string) ([]ForeignKeyInf
 	var fks []ForeignKeyInfo
 	for rows.Next() {
 		var fk ForeignKeyInfo
-		fk.TableName = tableName // Set the current table name
+		fk.TableName = tableName      // Set the current table name
 		var foreignTableSchema string // Not directly used in ForeignKeyInfo, but needed for scan
 		if err := rows.Scan(&fk.ConstraintName, &fk.ColumnName, &foreignTableSchema, &fk.ForeignTableName, &fk.ForeignColumnName); err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
