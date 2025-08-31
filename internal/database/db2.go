@@ -4,94 +4,69 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
-	"time" // For time.Time in EnsureParentRecordExists
+	"time"
 
-	"github.com/lib/pq" // PostgreSQL driver
+	_ "github.com/ibmdb/go_ibm_db" // DB2 driver
 )
 
-// PostgresDB implements the DBClient interface for PostgreSQL.
-type PostgresDB struct {
+// DB2DB implements the DBClient interface for DB2.
+type DB2DB struct {
 	db *sql.DB
 }
 
-// NewPostgresDB creates a new PostgresDB instance.
-func NewPostgresDB(connStr string) (*PostgresDB, error) {
-	db, err := sql.Open("postgres", connStr)
+// NewDB2DB creates a new DB2DB instance.
+func NewDB2DB(connStr string) (*DB2DB, error) {
+	db, err := sql.Open("go_ibm_db", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
 	if err = db.Ping(); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("failed to connect to PostgreSQL database: %w", err)
+		return nil, fmt.Errorf("failed to connect to DB2 database: %w", err)
 	}
-	log.Println("Successfully connected to PostgreSQL database.")
-	return &PostgresDB{db: db}, nil
+	log.Println("Successfully connected to DB2 database.")
+	return &DB2DB{db: db}, nil
 }
 
 // GetDB returns the underlying *sql.DB connection.
-func (p *PostgresDB) GetDB() *sql.DB {
-	return p.db
+func (d *DB2DB) GetDB() *sql.DB {
+	return d.db
 }
 
 // Close closes the database connection.
-func (p *PostgresDB) Close() error {
-	if p.db != nil {
-		return p.db.Close()
+func (d *DB2DB) Close() error {
+	if d.db != nil {
+		return d.db.Close()
 	}
 	return nil
 }
 
-// DBInfo holds information about a database table and its columns.
-type DBInfo struct {
-	TableName         string
-	Columns           []ColumnInfo
-	PrimaryKeyColumns []string
-	UniqueKeyColumns  [][]string
-	ForeignKeys       []ForeignKeyInfo
-}
+// GetSchemaInfo retrieves schema information for a given schema name from DB2.
+func (d *DB2DB) GetSchemaInfo(schemaName string) (map[string]DBInfo, error) {
+	log.Printf("Retrieving schema for '%s' from DB2.\n", schemaName)
 
-// ColumnInfo holds information about a database column.
-type ColumnInfo struct {
-	ColumnName    string
-	DataType      string
-	IsNullable    bool
-	ColumnDefault sql.NullString
-}
-
-// ForeignKeyInfo holds information about a foreign key constraint.
-type ForeignKeyInfo struct {
-	ConstraintName    string
-	TableName         string
-	ColumnName        string
-	ForeignTableName  string
-	ForeignColumnName string
-}
-
-// GetSchemaInfo retrieves schema information for a given schema name from PostgreSQL.
-func (p *PostgresDB) GetSchemaInfo(schemaName string) (map[string]DBInfo, error) {
-	log.Printf("Retrieving schema for '%s' from PostgreSQL.\n", schemaName)
-
-	tables, err := p.getTableNames(schemaName)
+	tables, err := d.getTableNames(schemaName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get table names from schema '%s': %w", schemaName, err)
 	}
 
 	schemaInfo := make(map[string]DBInfo)
 	for _, tableName := range tables {
-		columns, err := p.getColumnInfo(tableName)
+		columns, err := d.getColumnInfo(tableName, schemaName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get column info for table %s: %w", tableName, err)
 		}
-		primaryKeys, err := p.getPrimaryKeyColumns(tableName)
+		primaryKeys, err := d.getPrimaryKeyColumns(tableName, schemaName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get primary key info for table %s: %w", tableName, err)
 		}
-		uniqueKeys, err := p.getUniqueKeyColumns(tableName)
+		uniqueKeys, err := d.getUniqueKeyColumns(tableName, schemaName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get unique key info for table %s: %w", tableName, err)
 		}
-		foreignKeys, err := p.getForeignKeyInfo(tableName)
+		foreignKeys, err := d.getForeignKeyInfo(tableName, schemaName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get foreign key info for table %s: %w", tableName, err)
 		}
@@ -108,12 +83,12 @@ func (p *PostgresDB) GetSchemaInfo(schemaName string) (map[string]DBInfo, error)
 	return schemaInfo, nil
 }
 
-func (p *PostgresDB) getTableNames(schemaName string) ([]string, error) {
-	rows, err := p.db.Query(`
-		SELECT table_name
-		FROM information_schema.tables
-		WHERE table_schema = $1 AND table_type = 'BASE TABLE';
-	`, schemaName)
+func (d *DB2DB) getTableNames(schemaName string) ([]string, error) {
+	rows, err := d.db.Query(`
+		SELECT TABNAME
+		FROM SYSCAT.TABLES
+		WHERE TABSCHEMA = ? AND TYPE = 'T'
+	`, strings.ToUpper(schemaName)) // DB2 schema names are typically uppercase
 	if err != nil {
 		return nil, fmt.Errorf("query failed for schema '%s': %w", schemaName, err)
 	}
@@ -130,13 +105,13 @@ func (p *PostgresDB) getTableNames(schemaName string) ([]string, error) {
 	return tables, nil
 }
 
-func (p *PostgresDB) getColumnInfo(tableName string) ([]ColumnInfo, error) {
-	rows, err := p.db.Query(`
-		SELECT column_name, data_type, is_nullable, column_default
-		FROM information_schema.columns
-		WHERE table_name = $1
-		ORDER BY ordinal_position;
-	`, tableName)
+func (d *DB2DB) getColumnInfo(tableName, schemaName string) ([]ColumnInfo, error) {
+	rows, err := d.db.Query(`
+		SELECT COLNAME, TYPENAME, NULLS, DEFAULT
+		FROM SYSCAT.COLUMNS
+		WHERE TABSCHEMA = ? AND TABNAME = ?
+		ORDER BY COLNO
+	`, strings.ToUpper(schemaName), strings.ToUpper(tableName))
 	if err != nil {
 		return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
 	}
@@ -149,7 +124,7 @@ func (p *PostgresDB) getColumnInfo(tableName string) ([]ColumnInfo, error) {
 		if err := rows.Scan(&colName, &dataType, &isNullableStr, &colDefault); err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
-		isNullable := (isNullableStr == "YES")
+		isNullable := (isNullableStr == "Y") // DB2 uses 'Y' for nullable
 		columns = append(columns, ColumnInfo{
 			ColumnName:    colName,
 			DataType:      dataType,
@@ -160,15 +135,19 @@ func (p *PostgresDB) getColumnInfo(tableName string) ([]ColumnInfo, error) {
 	return columns, nil
 }
 
-func (p *PostgresDB) getPrimaryKeyColumns(tableName string) ([]string, error) {
-	rows, err := p.db.Query(`
-		SELECT a.attname
-		FROM pg_index i
-		JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-		WHERE i.indrelid = $1::regclass AND i.indisprimary;
-	`, tableName)
+func (d *DB2DB) getPrimaryKeyColumns(tableName, schemaName string) ([]string, error) {
+	rows, err := d.db.Query(`
+		SELECT COLNAME
+		FROM SYSCAT.KEYCOLUSE
+		WHERE TABSCHEMA = ? AND TABNAME = ? AND CONSTNAME IN (
+			SELECT CONSTNAME
+			FROM SYSCAT.TABCONST
+			WHERE TABSCHEMA = ? AND TABNAME = ? AND TYPE = 'P'
+		)
+		ORDER BY COLSEQ
+	`, strings.ToUpper(schemaName), strings.ToUpper(tableName), strings.ToUpper(schemaName), strings.ToUpper(tableName))
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
 	}
 	defer rows.Close()
 
@@ -183,57 +162,45 @@ func (p *PostgresDB) getPrimaryKeyColumns(tableName string) ([]string, error) {
 	return pks, nil
 }
 
-func (p *PostgresDB) getUniqueKeyColumns(tableName string) ([][]string, error) {
-	rows, err := p.db.Query(`
-		SELECT
-			array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum)) AS unique_columns
-		FROM
-			pg_index i
-		JOIN
-			pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-		WHERE
-			i.indrelid = $1::regclass
-			AND i.indisunique
-			AND NOT i.indisprimary -- Exclude primary keys, as they are already unique
-		GROUP BY
-			i.indexrelid;
-	`, tableName)
+func (d *DB2DB) getUniqueKeyColumns(tableName, schemaName string) ([][]string, error) {
+	// DB2 unique key information is a bit more complex to retrieve than PostgreSQL.
+	// This query attempts to get unique constraints that are not primary keys.
+	rows, err := d.db.Query(`
+		SELECT LISTAGG(kcu.COLNAME, ',') WITHIN GROUP (ORDER BY kcu.COLSEQ) AS UNIQUE_COLUMNS
+		FROM SYSCAT.KEYCOLUSE kcu
+		JOIN SYSCAT.TABCONST tc ON kcu.CONSTNAME = tc.CONSTNAME AND kcu.TABSCHEMA = tc.TABSCHEMA AND kcu.TABNAME = tc.TABNAME
+		WHERE kcu.TABSCHEMA = ? AND kcu.TABNAME = ? AND tc.TYPE = 'U'
+		GROUP BY kcu.CONSTNAME
+	`, strings.ToUpper(schemaName), strings.ToUpper(tableName))
 	if err != nil {
-		return nil, fmt.Errorf("query failed: %w", err)
+		return nil, fmt.Errorf("query failed for table %s: %w", tableName, err)
 	}
 	defer rows.Close()
 
 	var uks [][]string
 	for rows.Next() {
-		var uniqueCols []string
-		if err := rows.Scan(pq.Array(&uniqueCols)); err != nil {
+		var uniqueColsStr string
+		if err := rows.Scan(&uniqueColsStr); err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
-		uks = append(uks, uniqueCols)
+		uks = append(uks, strings.Split(uniqueColsStr, ","))
 	}
 	return uks, nil
 }
 
-func (p *PostgresDB) getForeignKeyInfo(tableName string) ([]ForeignKeyInfo, error) {
-	rows, err := p.db.Query(`
+func (d *DB2DB) getForeignKeyInfo(tableName, schemaName string) ([]ForeignKeyInfo, error) {
+	rows, err := d.db.Query(`
 		SELECT
-			tc.constraint_name,
-			kcu.column_name,
-			ccu.table_name AS foreign_table_name,
-			ccu.column_name AS foreign_column_name
-		FROM
-			information_schema.table_constraints AS tc
-		JOIN
-			information_schema.key_column_usage AS kcu
-			ON tc.constraint_name = kcu.constraint_name
-			AND tc.table_schema = kcu.table_schema
-		JOIN
-			information_schema.constraint_column_usage AS ccu
-			ON ccu.constraint_name = tc.constraint_name
-			AND ccu.table_schema = tc.table_schema
-		WHERE
-			tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = $1;
-	`, tableName)
+			rc.CONSTNAME AS CONSTRAINT_NAME,
+			kcu.COLNAME AS COLUMN_NAME,
+			rc.REFTABSCHEMA AS FOREIGN_TABLE_SCHEMA,
+			rc.REFTABNAME AS FOREIGN_TABLE_NAME,
+			kcu_ref.COLNAME AS FOREIGN_COLUMN_NAME
+		FROM SYSCAT.REFERENCES rc
+		JOIN SYSCAT.KEYCOLUSE kcu ON rc.CONSTNAME = kcu.CONSTNAME AND rc.TABSCHEMA = kcu.TABSCHEMA AND rc.TABNAME = kcu.TABNAME
+		JOIN SYSCAT.KEYCOLUSE kcu_ref ON rc.REFKEYNAME = kcu_ref.CONSTNAME AND rc.REFTABSCHEMA = kcu_ref.TABSCHEMA AND rc.REFTABNAME = kcu_ref.TABNAME AND kcu.COLSEQ = kcu_ref.COLSEQ
+		WHERE rc.TABSCHEMA = ? AND rc.TABNAME = ?
+	`, strings.ToUpper(schemaName), strings.ToUpper(tableName))
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
@@ -243,7 +210,8 @@ func (p *PostgresDB) getForeignKeyInfo(tableName string) ([]ForeignKeyInfo, erro
 	for rows.Next() {
 		var fk ForeignKeyInfo
 		fk.TableName = tableName // Set the current table name
-		if err := rows.Scan(&fk.ConstraintName, &fk.ColumnName, &fk.ForeignTableName, &fk.ForeignColumnName); err != nil {
+		var foreignTableSchema string // Not directly used in ForeignKeyInfo, but needed for scan
+		if err := rows.Scan(&fk.ConstraintName, &fk.ColumnName, &foreignTableSchema, &fk.ForeignTableName, &fk.ForeignColumnName); err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
 		fks = append(fks, fk)
@@ -251,77 +219,55 @@ func (p *PostgresDB) getForeignKeyInfo(tableName string) ([]ForeignKeyInfo, erro
 	return fks, nil
 }
 
-// PrepareInsertStatement prepares an INSERT statement for PostgreSQL.
-func (p *PostgresDB) PrepareInsertStatement(dbInfo DBInfo) (*sql.Stmt, error) {
+// PrepareInsertStatement prepares an INSERT statement for DB2.
+func (d *DB2DB) PrepareInsertStatement(dbInfo DBInfo) (*sql.Stmt, error) {
 	var cols []string
 	var placeholders []string
 	for i, colInfo := range dbInfo.Columns {
 		cols = append(cols, colInfo.ColumnName)
-		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+		placeholders = append(placeholders, "?") // DB2 uses '?' for placeholders
 	}
 
-	pkMap := make(map[string]bool)
-	for _, pkCol := range dbInfo.PrimaryKeyColumns {
-		pkMap[pkCol] = true
-	}
+	// DB2 does not have a direct equivalent to PostgreSQL's ON CONFLICT clause.
+	// A common approach is to attempt an INSERT and handle duplicates, or
+	// check for existence first, then INSERT or UPDATE.
+	// For simplicity, we'll use a simple INSERT here. If a primary key conflict occurs,
+	// the DB2 driver will return an error, which the importer will log and skip.
+	// A more robust solution would involve a MERGE statement or separate SELECT/INSERT/UPDATE logic.
 
-	var query string
-	if len(dbInfo.PrimaryKeyColumns) > 0 {
-		var updateClauses []string
-		for _, colInfo := range dbInfo.Columns {
-			if !pkMap[colInfo.ColumnName] {
-				updateClauses = append(updateClauses, fmt.Sprintf("%s = EXCLUDED.%s", colInfo.ColumnName, colInfo.ColumnName))
-			}
-		}
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		dbInfo.TableName,
+		strings.Join(cols, ", "),
+		strings.Join(placeholders, ", "),
+	)
 
-		if len(updateClauses) > 0 {
-			query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
-				dbInfo.TableName,
-				strings.Join(cols, ", "),
-				strings.Join(placeholders, ", "),
-				strings.Join(dbInfo.PrimaryKeyColumns, ", "),
-				strings.Join(updateClauses, ", "),
-			)
-		} else {
-			query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING",
-				dbInfo.TableName,
-				strings.Join(cols, ", "),
-				strings.Join(placeholders, ", "),
-				strings.Join(dbInfo.PrimaryKeyColumns, ", "),
-			)
-		}
-	} else {
-		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			dbInfo.TableName,
-			strings.Join(cols, ", "),
-			strings.Join(placeholders, ", "),
-		)
-	}
-
-	stmt, err := p.db.Prepare(query)
+	stmt, err := d.db.Prepare(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare statement: %w", err)
 	}
 	return stmt, nil
 }
 
-// ParentRecordExists checks if a record exists in the given table for a specific column and value in PostgreSQL.
-func (p *PostgresDB) ParentRecordExists(dbInfo DBInfo, columnName, value string) (bool, error) {
-	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = $1)", dbInfo.TableName, columnName)
-	var exists bool
-	err := p.db.QueryRow(query, value).Scan(&exists)
+// ParentRecordExists checks if a record exists in the given table for a specific column and value in DB2.
+func (d *DB2DB) ParentRecordExists(dbInfo DBInfo, columnName, value string) (bool, error) {
+	query := fmt.Sprintf("SELECT 1 FROM %s WHERE %s = ?", dbInfo.TableName, columnName)
+	var exists int
+	err := d.db.QueryRow(query, value).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
 	if err != nil {
 		return false, fmt.Errorf("failed to check existence of record in %s for %s=%s: %w", dbInfo.TableName, columnName, value, err)
 	}
-	return exists, nil
+	return true, nil
 }
 
 // EnsureParentRecordExists checks if a record with the given foreignKeyValue exists in the parent table.
 // If not, it creates a new record in the parent table with default values and the provided foreignKeyValue
-// for the foreignColumnName. This implementation is specific to PostgreSQL.
-func (p *PostgresDB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumnName, foreignKeyValue string, dbSchema map[string]DBInfo) error {
+// for the foreignColumnName. This implementation is specific to DB2.
+func (d *DB2DB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumnName, foreignKeyValue string, dbSchema map[string]DBInfo) error {
 	// Check if the parent record already exists
-	exists, err := p.ParentRecordExists(parentDBInfo, foreignColumnName, foreignKeyValue)
+	exists, err := d.ParentRecordExists(parentDBInfo, foreignColumnName, foreignKeyValue)
 	if err != nil {
 		return fmt.Errorf("failed to check parent record existence: %w", err)
 	}
@@ -351,7 +297,7 @@ func (p *PostgresDB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumn
 	// First, populate parentValues with default/provided/random values
 	for colIdx, colInfo := range parentDBInfo.Columns {
 		parentCols = append(parentCols, colInfo.ColumnName)
-		parentPlaceholders = append(parentPlaceholders, fmt.Sprintf("$%d", colIdx+1))
+		parentPlaceholders = append(parentPlaceholders, "?") // DB2 uses '?' for placeholders
 
 		var val interface{}
 		var err error
@@ -424,7 +370,7 @@ func (p *PostgresDB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumn
 				if !ok {
 					return fmt.Errorf("foreign table %s not found in schema info for foreign key %s during recursive ensureParent", fk.ForeignTableName, fk.ConstraintName)
 				}
-				err := p.EnsureParentRecordExists(parentOfParentDBInfo, fk.ForeignColumnName, fkValueStr, dbSchema)
+				err := d.EnsureParentRecordExists(parentOfParentDBInfo, fk.ForeignColumnName, fkValueStr, dbSchema)
 				if err != nil {
 					return fmt.Errorf("failed to recursively ensure parent record for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValueStr, err)
 				}
@@ -434,14 +380,13 @@ func (p *PostgresDB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumn
 		}
 	}
 
-	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING",
+	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		parentDBInfo.TableName,
 		strings.Join(parentCols, ", "),
 		strings.Join(parentPlaceholders, ", "),
 	)
-	// TODO: Consider UPSERT for parent record creation if primary key might conflict
 
-	_, err = p.db.Exec(insertQuery, parentValues...)
+	_, err = d.db.Exec(insertQuery, parentValues...)
 	if err != nil {
 		return fmt.Errorf("failed to insert parent record into %s: %w", parentDBInfo.TableName, err)
 	}

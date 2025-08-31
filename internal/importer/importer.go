@@ -1,59 +1,35 @@
 package importer
 
 import (
-	"database/sql"
 	"encoding/csv"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
-	"math/big"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
-
-	"crypto/rand"
 
 	"db-auto-importer/internal/database"
 	"db-auto-importer/internal/graph"
-
-	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
 // Importer handles the CSV parsing and data import logic.
 type Importer struct {
-	DBSchema  map[string]database.DBInfo
-	DBConnStr string
-	db        *sql.DB // Database connection
+	DBSchema map[string]database.DBInfo
+	DBClient database.DBClient // Use the DBClient interface
 }
 
 // NewImporter creates a new Importer instance.
-func NewImporter(dbSchema map[string]database.DBInfo, dbConnStr string) (*Importer, error) {
-	db, err := sql.Open("postgres", dbConnStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database connection: %w", err)
-	}
-	if err = db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-	log.Println("Importer successfully connected to the database.")
-
+func NewImporter(dbSchema map[string]database.DBInfo, dbClient database.DBClient) (*Importer, error) {
 	return &Importer{
-		DBSchema:  dbSchema,
-		DBConnStr: dbConnStr,
-		db:        db,
+		DBSchema: dbSchema,
+		DBClient: dbClient,
 	}, nil
 }
 
 // Close closes the database connection.
 func (i *Importer) Close() error {
-	if i.db != nil {
-		return i.db.Close()
-	}
-	return nil
+	return i.DBClient.Close()
 }
 
 // ImportCSVFiles reads CSV files from the given directory and imports them into the database.
@@ -143,7 +119,7 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 		}
 	}
 
-	stmt, err := prepareInsertStatement(i.db, dbInfo)
+	stmt, err := i.DBClient.PrepareInsertStatement(dbInfo)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert statement for table %s: %w", dbInfo.TableName, err)
 	}
@@ -162,15 +138,10 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 		values := make([]interface{}, len(dbInfo.Columns))
 		for colIdx, colInfo := range dbInfo.Columns {
 			csvVal := ""
-			// Determine the CSV value based on the column mapping.
-			// If the column is not found in the map (only possible if hasHeader is true and CSV is missing a DB column),
-			// or if the mapped index is out of bounds for the current record (CSV has fewer columns than expected),
-			// csvVal remains an empty string, which convertToDBType will handle as a missing/default value.
 			if idx, ok := columnMap[colInfo.ColumnName]; ok && idx < len(record) {
 				csvVal = record[idx]
 			}
 
-			// Check for foreign key constraints and ensure parent records exist
 			for _, fk := range dbInfo.ForeignKeys {
 				if fk.ColumnName == colInfo.ColumnName {
 					parentDBInfo, ok := i.DBSchema[fk.ForeignTableName]
@@ -179,12 +150,11 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 					}
 
 					fkValue := csvVal
-					// Skip foreign key check if the value is empty (null)
 					if fkValue == "" {
 						continue
 					}
 
-					err := i.ensureParentRecordExists(i.db, parentDBInfo, fk.ForeignColumnName, fkValue)
+					err := i.DBClient.EnsureParentRecordExists(parentDBInfo, fk.ForeignColumnName, fkValue, i.DBSchema)
 					if err != nil {
 						return fmt.Errorf("failed to ensure parent record exists for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValue, err)
 					}
@@ -192,12 +162,9 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 				}
 			}
 
-			convertedVal, err := convertToDBType(csvVal, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
+			convertedVal, err := database.ConvertToDBType(csvVal, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
 			if err != nil {
 				log.Printf("Warning: Failed to convert value '%s' for column %s (%s) in table %s: %v. Skipping this value.\n", csvVal, colInfo.ColumnName, colInfo.DataType, dbInfo.TableName, err)
-				// Depending on desired behavior, you might set convertedVal to nil or a default zero value
-				// For now, we'll set it to nil, which will be handled by the database as NULL if the column is nullable.
-				// If the column is NOT NULL, the database insert will likely fail, which is caught below.
 				values[colIdx] = nil
 			} else {
 				values[colIdx] = convertedVal
@@ -206,353 +173,12 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 
 		_, err = stmt.Exec(values...)
 		if err != nil {
-			// Log the error and continue to the next record instead of returning
 			log.Printf("Error inserting record into %s from file %s: %v. Record: %v\n", dbInfo.TableName, filePath, err, record)
-			continue // Continue to the next record
+			continue
 		}
 	}
 
 	return nil
-}
-
-// ensureParentRecordExists checks if a record with the given foreignKeyValue exists in the parent table.
-// If not, it creates a new record in the parent table with default values and the provided foreignKeyValue
-// for the foreignColumnName.
-func (i *Importer) ensureParentRecordExists(db *sql.DB, parentDBInfo database.DBInfo, foreignColumnName, foreignKeyValue string) error {
-	// Check if the parent record already exists
-	exists, err := i.parentRecordExists(db, parentDBInfo, foreignColumnName, foreignKeyValue)
-	if err != nil {
-		return fmt.Errorf("failed to check parent record existence: %w", err)
-	}
-	if exists {
-		return nil // Parent record already exists
-	}
-
-	// Parent record does not exist, create it
-	log.Printf("Creating missing parent record in table '%s' for column '%s' with value '%s'\n", parentDBInfo.TableName, foreignColumnName, foreignKeyValue)
-
-	// Prepare values for the new parent record
-	parentCols := make([]string, 0, len(parentDBInfo.Columns))
-	parentPlaceholders := make([]string, 0, len(parentDBInfo.Columns))
-	parentValues := make([]interface{}, len(parentDBInfo.Columns)) // Initialize with correct size
-
-	// Create a map for quick lookup of unique key columns (including primary keys)
-	uniqueColsMap := make(map[string]bool)
-	for _, pkCol := range parentDBInfo.PrimaryKeyColumns {
-		uniqueColsMap[pkCol] = true
-	}
-	for _, ukCols := range parentDBInfo.UniqueKeyColumns {
-		if len(ukCols) == 1 { // Only consider single-column unique constraints for random generation
-			uniqueColsMap[ukCols[0]] = true
-		}
-	}
-
-	// First, populate parentValues with default/provided/random values
-	for colIdx, colInfo := range parentDBInfo.Columns {
-		parentCols = append(parentCols, colInfo.ColumnName)
-		parentPlaceholders = append(parentPlaceholders, fmt.Sprintf("$%d", colIdx+1))
-
-		var val interface{}
-		var err error
-
-		if colInfo.ColumnName == foreignColumnName {
-			// Use the foreignKeyValue for the foreign key column that triggered this call
-			val, err = convertToDBType(foreignKeyValue, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
-			if err != nil {
-				log.Printf("Warning: Failed to convert foreign key value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", foreignKeyValue, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil // Use nil if conversion fails
-			}
-		} else if colInfo.ColumnDefault.Valid {
-			// Use the explicit column default if available
-			val, err = convertToDBType(colInfo.ColumnDefault.String, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
-			if err != nil {
-				log.Printf("Warning: Failed to convert default value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnDefault.String, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil
-			}
-		} else if uniqueColsMap[colInfo.ColumnName] && !colInfo.IsNullable {
-			// If it's a unique column (PK or UK) and not nullable, generate a random value
-			val, err = generateRandomValue(colInfo.DataType)
-			if err != nil {
-				log.Printf("Warning: Failed to generate random value for unique column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil // Fallback to nil if random generation fails
-			}
-		} else {
-			// For other columns, use default behavior (empty string for convertToDBType)
-			val, err = convertToDBType("", colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
-			if err != nil {
-				log.Printf("Warning: Failed to get default value for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil // Use nil if conversion fails
-			}
-		}
-		parentValues[colIdx] = val
-	}
-
-	// Recursively ensure parent records for this parentDBInfo's foreign keys
-	for _, fk := range parentDBInfo.ForeignKeys {
-		// Find the value for this foreign key from the prepared parentValues
-		fkColIdx := -1
-		for idx, colInfo := range parentDBInfo.Columns {
-			if colInfo.ColumnName == fk.ColumnName {
-				fkColIdx = idx
-				break
-			}
-		}
-
-		if fkColIdx != -1 {
-			fkValueInterface := parentValues[fkColIdx] // This is an interface{}
-			if fkValueInterface != nil {
-				// Convert the interface{} value back to a string suitable for the recursive call
-				var fkValueStr string
-				switch v := fkValueInterface.(type) {
-				case int64:
-					fkValueStr = strconv.FormatInt(v, 10)
-				case float64:
-					fkValueStr = strconv.FormatFloat(v, 'f', -1, 64)
-				case bool:
-					fkValueStr = strconv.FormatBool(v)
-				case time.Time:
-					fkValueStr = v.Format(time.RFC3339) // Or another suitable format
-				case string:
-					fkValueStr = v
-				default:
-					// Fallback for other types, might need more specific handling
-					fkValueStr = fmt.Sprintf("%v", v)
-				}
-
-				parentOfParentDBInfo, ok := i.DBSchema[fk.ForeignTableName]
-				if !ok {
-					return fmt.Errorf("foreign table %s not found in schema info for foreign key %s during recursive ensureParent", fk.ForeignTableName, fk.ConstraintName)
-				}
-				err := i.ensureParentRecordExists(db, parentOfParentDBInfo, fk.ForeignColumnName, fkValueStr)
-				if err != nil {
-					return fmt.Errorf("failed to recursively ensure parent record for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValueStr, err)
-				}
-			}
-		} else {
-			log.Printf("Warning: Foreign key column '%s' not found in parentDBInfo.Columns for table '%s'. Cannot recursively ensure its parent.\n", fk.ColumnName, parentDBInfo.TableName)
-		}
-	}
-
-	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING",
-		parentDBInfo.TableName,
-		strings.Join(parentCols, ", "),
-		strings.Join(parentPlaceholders, ", "),
-	)
-	// TODO: Consider UPSERT for parent record creation if primary key might conflict
-
-	_, err = db.Exec(insertQuery, parentValues...)
-	if err != nil {
-		return fmt.Errorf("failed to insert parent record into %s: %w", parentDBInfo.TableName, err)
-	}
-
-	return nil
-}
-
-// parentRecordExists checks if a record exists in the given table for a specific column and value.
-func (i *Importer) parentRecordExists(db *sql.DB, dbInfo database.DBInfo, columnName, value string) (bool, error) {
-	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = $1)", dbInfo.TableName, columnName)
-	var exists bool
-	err := db.QueryRow(query, value).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("failed to check existence of record in %s for %s=%s: %w", dbInfo.TableName, columnName, value, err)
-	}
-	return exists, nil
-}
-
-func prepareInsertStatement(db *sql.DB, dbInfo database.DBInfo) (*sql.Stmt, error) {
-	var cols []string
-	var placeholders []string
-	for i, colInfo := range dbInfo.Columns {
-		cols = append(cols, colInfo.ColumnName)
-		placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
-	}
-
-	// Create a map for quick lookup of primary key columns
-	pkMap := make(map[string]bool)
-	for _, pkCol := range dbInfo.PrimaryKeyColumns {
-		pkMap[pkCol] = true
-	}
-
-	var query string
-	if len(dbInfo.PrimaryKeyColumns) > 0 {
-		// Construct the ON CONFLICT DO UPDATE SET clause
-		var updateClauses []string
-		for _, colInfo := range dbInfo.Columns {
-			// Do not update primary key columns in the SET clause, as they are used for conflict resolution
-			if !pkMap[colInfo.ColumnName] {
-				updateClauses = append(updateClauses, fmt.Sprintf("%s = EXCLUDED.%s", colInfo.ColumnName, colInfo.ColumnName))
-			}
-		}
-
-		if len(updateClauses) > 0 {
-			query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
-				dbInfo.TableName,
-				strings.Join(cols, ", "),
-				strings.Join(placeholders, ", "),
-				strings.Join(dbInfo.PrimaryKeyColumns, ", "),
-				strings.Join(updateClauses, ", "),
-			)
-		} else {
-			// If there are no non-primary key columns to update, just do nothing on conflict
-			query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO NOTHING",
-				dbInfo.TableName,
-				strings.Join(cols, ", "),
-				strings.Join(placeholders, ", "),
-				strings.Join(dbInfo.PrimaryKeyColumns, ", "),
-			)
-		}
-	} else {
-		// No primary key defined, proceed with simple insert
-		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			dbInfo.TableName,
-			strings.Join(cols, ", "),
-			strings.Join(placeholders, ", "),
-		)
-	}
-
-	stmt, err := db.Prepare(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	return stmt, nil
-}
-
-func convertToDBType(csvValue, dataType string, isNullable bool, columnDefault sql.NullString) (interface{}, error) {
-	if csvValue == "" && isNullable {
-		return nil, nil // Return nil for nullable empty strings
-	}
-	if csvValue == "" && columnDefault.Valid {
-		csvValue = columnDefault.String // Use default value if CSV is empty and default exists
-	}
-	if csvValue == "" && !isNullable {
-		// If not nullable and no default, provide a sensible default based on type.
-		// This part is now handled by generateRandomValue if it's a unique key.
-		// If not a unique key, we still need a default.
-		switch dataType {
-		case "text", "character varying", "varchar", "char", "character":
-			return "", nil
-		case "integer", "smallint", "bigint":
-			return 0, nil
-		case "numeric", "decimal", "real", "double precision":
-			return 0.0, nil
-		case "boolean":
-			return false, nil
-		case "date", "timestamp without time zone", "timestamp with time zone":
-			return time.Time{}, nil // Zero value for time
-		default:
-			return nil, fmt.Errorf("non-nullable column with no default and empty CSV value for type %s", dataType)
-		}
-	}
-
-	switch dataType {
-	case "text", "character varying", "varchar", "char", "character":
-		return csvValue, nil
-	case "integer", "smallint", "bigint":
-		val, err := strconv.ParseInt(csvValue, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert '%s' to integer: %w", csvValue, err)
-		}
-		return val, nil
-	case "numeric", "decimal", "real", "double precision":
-		val, err := strconv.ParseFloat(csvValue, 64)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert '%s' to float: %w", csvValue, err)
-		}
-		return val, nil
-	case "boolean":
-		val, err := strconv.ParseBool(csvValue)
-		if err != nil {
-			// Try common string representations for boolean
-			lowerVal := strings.ToLower(csvValue)
-			if lowerVal == "true" || lowerVal == "t" || lowerVal == "1" || lowerVal == "yes" || lowerVal == "y" {
-				return true, nil
-			}
-			if lowerVal == "false" || lowerVal == "f" || lowerVal == "0" || lowerVal == "no" || lowerVal == "n" {
-				return false, nil
-			}
-			return nil, fmt.Errorf("failed to convert '%s' to boolean: %w", csvValue, err)
-		}
-		return val, nil
-	case "date":
-		// Assuming YYYY-MM-DD format
-		val, err := time.Parse("2006-01-02", csvValue)
-		if err != nil {
-			return nil, fmt.Errorf("failed to convert '%s' to date (expected YYYY-MM-DD): %w", csvValue, err)
-		}
-		return val, nil
-	case "timestamp without time zone", "timestamp with time zone":
-		// Assuming RFC3339 format (e.g., 2006-01-02T15:04:05Z07:00)
-		val, err := time.Parse(time.RFC3339, csvValue)
-		if err != nil {
-			// Try other common formats if RFC3339 fails
-			val, err = time.Parse("2006-01-02 15:04:05", csvValue)
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert '%s' to timestamp: %w", csvValue, err)
-			}
-		}
-		return val, nil
-	default:
-		// For unsupported types, return the string value and let the DB handle it,
-		// or return an error if strict type checking is desired.
-		log.Printf("Warning: Unsupported data type '%s' for value '%s'. Passing as string.\n", dataType, csvValue)
-		return csvValue, nil
-	}
-}
-
-// generateRandomValue generates a random value suitable for database insertion based on data type.
-// This is used for unique columns (PK/UK) that don't have a default value and are not the FK being inserted.
-func generateRandomValue(dataType string) (interface{}, error) {
-	switch dataType {
-	case "text", "character varying", "varchar", "char", "character":
-		b := make([]byte, 16) // 16 bytes for a 32-char hex string
-		_, err := rand.Read(b)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random bytes for string: %w", err)
-		}
-		return hex.EncodeToString(b), nil
-	case "integer", "smallint", "bigint":
-		// Generate a random int64
-		max := big.NewInt(int64(^uint64(0) >> 1)) // Max int64
-		n, err := rand.Int(rand.Reader, max)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random integer: %w", err)
-		}
-		return n.Int64(), nil
-	case "numeric", "decimal", "real", "double precision":
-		// Generate a random float64 between 0 and 1, then scale it
-		// This is a simple approach; for true randomness or specific ranges, more complex logic might be needed.
-		max := big.NewInt(1e9) // For a reasonable range of floats
-		n, err := rand.Int(rand.Reader, max)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random float: %w", err)
-		}
-		return float64(n.Int64()) / float64(max.Int64()), nil
-	case "boolean":
-		// Random boolean
-		b := make([]byte, 1)
-		_, err := rand.Read(b)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random boolean: %w", err)
-		}
-		return b[0]%2 == 0, nil
-	case "date", "timestamp without time zone", "timestamp with time zone":
-		// Generate a random time within a reasonable range (e.g., last 10 years)
-		now := time.Now()
-		tenYearsAgo := now.AddDate(-10, 0, 0)
-		diff := now.Sub(tenYearsAgo)
-		randomSeconds := big.NewInt(0)
-		if diff.Seconds() > 0 {
-			maxSeconds := big.NewInt(int64(diff.Seconds()))
-			var err error
-			randomSeconds, err = rand.Int(rand.Reader, maxSeconds)
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate random time: %w", err)
-			}
-		}
-		return tenYearsAgo.Add(time.Duration(randomSeconds.Int64()) * time.Second), nil
-	default:
-		return nil, fmt.Errorf("unsupported data type for random value generation: %s", dataType)
-	}
 }
 
 func getCSVFiles(dir string) ([]string, error) {
