@@ -8,8 +8,8 @@ import (
 	"fmt"
 )
 
-// newDB2Client returns an error indicating that DB2 support is not compiled.
-func newDB2Client(connStr string) (DBClient, error) {
+// NewDB2Client returns an error indicating that DB2 support is not compiled.
+func NewDB2Client(connStr string) (DBClient, error) {
 	return nil, fmt.Errorf("DB2 support not compiled. Build with -tags ibm_db to enable")
 }
 

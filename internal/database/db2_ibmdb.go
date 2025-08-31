@@ -7,9 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
-	"time"
 
 	_ "github.com/ibmdb/go_ibm_db" // DB2 driver
 )
@@ -19,8 +17,8 @@ type DB2DB struct {
 	db *sql.DB
 }
 
-// newDB2Client creates a new DB2DB instance.
-func newDB2Client(connStr string) (DBClient, error) {
+// NewDB2Client creates a new DB2DB instance.
+func NewDB2Client(connStr string) (DBClient, error) {
 	db, err := sql.Open("go_ibm_db", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
@@ -268,106 +266,15 @@ func (d *DB2DB) EnsureParentRecordExists(parentDBInfo DBInfo, foreignColumnName,
 	// Parent record does not exist, create it
 	log.Printf("Creating missing parent record in table '%s' for column '%s' with value '%s'\n", parentDBInfo.TableName, foreignColumnName, foreignKeyValue)
 
-	// Prepare values for the new parent record
-	parentCols := make([]string, 0, len(parentDBInfo.Columns))
-	parentPlaceholders := make([]string, 0, len(parentDBInfo.Columns))
-	parentValues := make([]interface{}, len(parentDBInfo.Columns)) // Initialize with correct size
-
-	// Create a map for quick lookup of unique key columns (including primary keys)
-	uniqueColsMap := make(map[string]bool)
-	for _, pkCol := range parentDBInfo.PrimaryKeyColumns {
-		uniqueColsMap[pkCol] = true
-	}
-	for _, ukCols := range parentDBInfo.UniqueKeyColumns {
-		if len(ukCols) == 1 { // Only consider single-column unique constraints for random generation
-			uniqueColsMap[ukCols[0]] = true
-		}
+	parentCols, _, parentValues, err := ensureParentRecordExistsCommon(d, parentDBInfo, foreignColumnName, foreignKeyValue, dbSchema)
+	if err != nil {
+		return err
 	}
 
-	// First, populate parentValues with default/provided/random values
-	for colIdx, colInfo := range parentDBInfo.Columns {
-		parentCols = append(parentCols, colInfo.ColumnName)
-		parentPlaceholders = append(parentPlaceholders, "?") // DB2 uses '?' for placeholders
-
-		var val interface{}
-		var err error
-
-		if colInfo.ColumnName == foreignColumnName {
-			// Use the foreignKeyValue for the foreign key column that triggered this call
-			val, err = convertToDBType(foreignKeyValue, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
-			if err != nil {
-				log.Printf("Warning: Failed to convert foreign key value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", foreignKeyValue, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil // Use nil if conversion fails
-			}
-		} else if colInfo.ColumnDefault.Valid {
-			// Use the explicit column default if available
-			val, err = convertToDBType(colInfo.ColumnDefault.String, colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
-			if err != nil {
-				log.Printf("Warning: Failed to convert default value '%s' for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnDefault.String, colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil
-			}
-		} else if uniqueColsMap[colInfo.ColumnName] && !colInfo.IsNullable {
-			// If it's a unique column (PK or UK) and not nullable, generate a random value
-			val, err = generateRandomValue(colInfo.DataType)
-			if err != nil {
-				log.Printf("Warning: Failed to generate random value for unique column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil // Fallback to nil if random generation fails
-			}
-		} else {
-			// For other columns, use default behavior (empty string for convertToDBType)
-			val, err = convertToDBType("", colInfo.DataType, colInfo.IsNullable, colInfo.ColumnDefault)
-			if err != nil {
-				log.Printf("Warning: Failed to get default value for column %s (%s) in parent table %s: %v. Using nil.\n", colInfo.ColumnName, colInfo.DataType, parentDBInfo.TableName, err)
-				val = nil // Use nil if conversion fails
-			}
-		}
-		parentValues[colIdx] = val
-	}
-
-	// Recursively ensure parent records for this parentDBInfo's foreign keys
-	for _, fk := range parentDBInfo.ForeignKeys {
-		// Find the value for this foreign key from the prepared parentValues
-		fkColIdx := -1
-		for idx, colInfo := range parentDBInfo.Columns {
-			if colInfo.ColumnName == fk.ColumnName {
-				fkColIdx = idx
-				break
-			}
-		}
-
-		if fkColIdx != -1 {
-			fkValueInterface := parentValues[fkColIdx] // This is an interface{}
-			if fkValueInterface != nil {
-				// Convert the interface{} value back to a string suitable for the recursive call
-				var fkValueStr string
-				switch v := fkValueInterface.(type) {
-				case int64:
-					fkValueStr = strconv.FormatInt(v, 10)
-				case float64:
-					fkValueStr = strconv.FormatFloat(v, 'f', -1, 64)
-				case bool:
-					fkValueStr = strconv.FormatBool(v)
-				case time.Time:
-					fkValueStr = v.Format(time.RFC3339) // Or another suitable format
-				case string:
-					fkValueStr = v
-				default:
-					// Fallback for other types, might need more specific handling
-					fkValueStr = fmt.Sprintf("%v", v)
-				}
-
-				parentOfParentDBInfo, ok := dbSchema[fk.ForeignTableName]
-				if !ok {
-					return fmt.Errorf("foreign table %s not found in schema info for foreign key %s during recursive ensureParent", fk.ForeignTableName, fk.ConstraintName)
-				}
-				err := d.EnsureParentRecordExists(parentOfParentDBInfo, fk.ForeignColumnName, fkValueStr, dbSchema)
-				if err != nil {
-					return fmt.Errorf("failed to recursively ensure parent record for %s.%s (value: %s): %w", fk.ForeignTableName, fk.ForeignColumnName, fkValueStr, err)
-				}
-			}
-		} else {
-			log.Printf("Warning: Foreign key column '%s' not found in parentDBInfo.Columns for table '%s'. Cannot recursively ensure its parent.\n", fk.ColumnName, parentDBInfo.TableName)
-		}
+	// Generate DB2-specific placeholders
+	parentPlaceholders := make([]string, len(parentCols))
+	for i := range parentCols {
+		parentPlaceholders[i] = "?"
 	}
 
 	insertQuery := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
