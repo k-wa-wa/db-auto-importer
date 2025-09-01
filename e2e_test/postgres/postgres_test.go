@@ -123,8 +123,8 @@ func Test_csvを正しくimportできること(t *testing.T) {
 
 	t.Run("productsが正しく作成されていること", func(t *testing.T) {
 		expectedProducts := []common.Product{
-			{ID: 1, Name: "Product A", Price: 10.50},
-			{ID: 2, Name: "Product B", Price: 20.00},
+			{ID: 1, Name: "Laptop", Price: 1200.00},
+			{ID: 2, Name: "Mouse", Price: 25.50},
 		}
 
 		var actualProducts []common.Product
@@ -147,8 +147,8 @@ func Test_csvを正しくimportできること(t *testing.T) {
 
 	t.Run("tagsが正しく作成されていること", func(t *testing.T) {
 		expectedTags := []common.Tag{
-			{ID: 1, Name: "Tag1"},
-			{ID: 2, Name: "Tag2"},
+			{ID: 1, Name: "electronics"},
+			{ID: 2, Name: "computer"},
 		}
 
 		var actualTags []common.Tag
