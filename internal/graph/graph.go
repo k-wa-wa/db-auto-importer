@@ -3,6 +3,7 @@ package graph
 import (
 	"fmt"
 	"log"
+	"sort"
 
 	"db-auto-importer/internal/database"
 )
@@ -53,12 +54,23 @@ func (g *Graph) TopologicalSort() ([]string, error) {
 	var order []string
 	queue := []string{} // Queue for nodes with in-degree 0
 
-	// Initialize queue with all nodes that have an in-degree of 0
-	for _, node := range g.Nodes {
-		if node.InDegree == 0 {
-			queue = append(queue, node.TableName)
+	// Create a temporary map for in-degrees to preserve the original graph structure
+	currentInDegrees := make(map[string]int)
+	for tableName, node := range g.Nodes {
+		currentInDegrees[tableName] = node.InDegree
+	}
+
+	// Collect all nodes with an in-degree of 0
+	var initialZeroInDegreeNodes []string
+	for tableName, inDegree := range currentInDegrees {
+		if inDegree == 0 {
+			initialZeroInDegreeNodes = append(initialZeroInDegreeNodes, tableName)
 		}
 	}
+
+	// Sort them to ensure deterministic order
+	sort.Strings(initialZeroInDegreeNodes)
+	queue = append(queue, initialZeroInDegreeNodes...)
 
 	for len(queue) > 0 {
 		// Dequeue a node
@@ -68,9 +80,9 @@ func (g *Graph) TopologicalSort() ([]string, error) {
 
 		// For each neighbor of the dequeued node
 		for _, neighbor := range g.Nodes[tableName].Edges {
-			neighbor.InDegree--
+			currentInDegrees[neighbor.TableName]--
 			// If neighbor's in-degree becomes 0, enqueue it
-			if neighbor.InDegree == 0 {
+			if currentInDegrees[neighbor.TableName] == 0 {
 				queue = append(queue, neighbor.TableName)
 			}
 		}
