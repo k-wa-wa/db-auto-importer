@@ -224,7 +224,7 @@ func (d *DB2DB) getForeignKeyInfo(tableName, schemaName string) ([]ForeignKeyInf
 func (d *DB2DB) PrepareInsertStatement(dbInfo DBInfo) (*sql.Stmt, error) {
 	var cols []string
 	var placeholders []string
-	for i, colInfo := range dbInfo.Columns {
+	for _, colInfo := range dbInfo.Columns {
 		cols = append(cols, colInfo.ColumnName)
 		placeholders = append(placeholders, "?") // DB2 uses '?' for placeholders
 	}
@@ -246,7 +246,7 @@ func (d *DB2DB) PrepareInsertStatement(dbInfo DBInfo) (*sql.Stmt, error) {
 		var insertPlaceholders []string
 		var mergeSourceCols []string
 
-		for i, colInfo := range dbInfo.Columns {
+		for _, colInfo := range dbInfo.Columns {
 			mergeSourceCols = append(mergeSourceCols, fmt.Sprintf("? AS %s", colInfo.ColumnName))
 			insertCols = append(insertCols, colInfo.ColumnName)
 			insertPlaceholders = append(insertPlaceholders, "?")
