@@ -57,7 +57,6 @@ func (i *Importer) ImportCSVFiles(csvDir string, hasHeader bool) error {
 	for _, tableName := range importOrder {
 		filePath, ok := csvFilesMap[tableName]
 		if !ok {
-			log.Printf("Skipping table %s: no corresponding CSV file found.\n", tableName)
 			continue
 		}
 
