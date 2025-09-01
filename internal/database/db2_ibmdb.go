@@ -266,26 +266,34 @@ func (d *DB2DB) PrepareInsertStatement(dbInfo DBInfo) (*sql.Stmt, error) {
 		}
 	}
 
-	// The VALUES clause in the USING part will have one placeholder for each column.
-	// The parameters for the prepared statement will correspond to these values.
-	// The WHEN MATCHED and WHEN NOT MATCHED clauses will refer to these source values (S.<colname>).
-	query := fmt.Sprintf(`
+	var mergeQueryBuilder strings.Builder
+	mergeQueryBuilder.WriteString(fmt.Sprintf(`
 		MERGE INTO %s AS T
 		USING (VALUES (%s)) AS S (%s)
 		ON (%s)
-		WHEN MATCHED THEN
-			UPDATE SET %s
-		WHEN NOT MATCHED THEN
-			INSERT (%s) VALUES (%s)
 	`,
 		dbInfo.TableName,
 		strings.Join(placeholders, ", "), // Placeholders for the VALUES clause
 		strings.Join(cols, ", "),         // Column names for the VALUES clause
 		strings.Join(mergeOnClauses, " AND "),
-		strings.Join(updateSetClauses, ", "),
+	))
+
+	if len(updateSetClauses) > 0 {
+		mergeQueryBuilder.WriteString(fmt.Sprintf(`
+		WHEN MATCHED THEN
+			UPDATE SET %s
+		`, strings.Join(updateSetClauses, ", ")))
+	}
+
+	mergeQueryBuilder.WriteString(fmt.Sprintf(`
+		WHEN NOT MATCHED THEN
+			INSERT (%s) VALUES (%s)
+	`,
 		strings.Join(insertCols, ", "),
 		strings.Join(insertValuesFromSource, ", "),
-	)
+	))
+
+	query := mergeQueryBuilder.String()
 
 	stmt, err := d.db.Prepare(query)
 	if err != nil {
