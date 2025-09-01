@@ -9,7 +9,7 @@ csv データが DB 上に反映されていることを担保するため、外
 
 ## 3. 技術スタック
 *   **言語**: Go
-*   **データベース**: PostgreSQL / DB2
+*   **データベース**: PostgreSQL / MySQL / DB2
 *   **CSVパーシング**: Go標準ライブラリ `encoding/csv`
 *   **DBアクセス**: `database/sql`
 
