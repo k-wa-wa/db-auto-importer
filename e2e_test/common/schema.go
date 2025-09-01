@@ -6,18 +6,37 @@ import (
 )
 
 var ExpectedDBInfo = map[string]database.DBInfo{
-	"users": database.DBInfo{
-		TableName:         "users",
+	"organizations": {
+		TableName:         "organizations",
 		PrimaryKeyColumns: []string{"id"},
 		UniqueKeyColumns:  nil,
 		ForeignKeys:       nil,
 		Columns: []database.ColumnInfo{
 			{ColumnName: "id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
 			{ColumnName: "name", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
+		},
+	},
+	"users": {
+		TableName:         "users",
+		PrimaryKeyColumns: []string{"id"},
+		UniqueKeyColumns:  nil,
+		ForeignKeys: []database.ForeignKeyInfo{
+			{
+				ConstraintName:    "fk_organization_id",
+				TableName:         "users",
+				ColumnName:        "organization_id",
+				ForeignTableName:  "organizations",
+				ForeignColumnName: "id",
+			},
+		},
+		Columns: []database.ColumnInfo{
+			{ColumnName: "id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "name", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "organization_id", DataType: "integer", IsNullable: true, ColumnDefault: sql.NullString{}},
 			{ColumnName: "created_at", DataType: "timestamp without time zone", IsNullable: true, ColumnDefault: sql.NullString{}},
 		},
 	},
-	"posts": database.DBInfo{
+	"posts": {
 		TableName:         "posts",
 		PrimaryKeyColumns: []string{"id"},
 		UniqueKeyColumns:  nil,
@@ -38,7 +57,7 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 			{ColumnName: "published", DataType: "boolean", IsNullable: true, ColumnDefault: sql.NullString{}},
 		},
 	},
-	"products": database.DBInfo{
+	"products": {
 		TableName:         "products",
 		PrimaryKeyColumns: []string{"id"},
 		UniqueKeyColumns:  [][]string{{"name"}},
@@ -49,7 +68,7 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 			{ColumnName: "price", DataType: "numeric", IsNullable: true, ColumnDefault: sql.NullString{}},
 		},
 	},
-	"tags": database.DBInfo{
+	"tags": {
 		TableName:         "tags",
 		PrimaryKeyColumns: []string{"id"},
 		UniqueKeyColumns:  [][]string{{"name"}},
@@ -59,7 +78,7 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 			{ColumnName: "name", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
 		},
 	},
-	"product_tags": database.DBInfo{
+	"product_tags": {
 		TableName:         "product_tags",
 		PrimaryKeyColumns: []string{"product_id", "tag_id"},
 		UniqueKeyColumns:  nil,

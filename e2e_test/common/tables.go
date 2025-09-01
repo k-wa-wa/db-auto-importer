@@ -5,10 +5,16 @@ import (
 	"time"
 )
 
+type Organization struct {
+	ID   int    `db:"id"`
+	Name string `db:"name"`
+}
+
 type User struct {
-	ID        int       `db:"id"`
-	Name      string    `db:"name"`
-	CreatedAt time.Time `db:"created_at"`
+	ID             int       `db:"id"`
+	Name           string    `db:"name"`
+	OrganizationID int       `db:"organization_id"`
+	CreatedAt      time.Time `db:"created_at"`
 }
 
 type Post struct {

@@ -1,9 +1,16 @@
 
---- 1. シンプルな親子関係をテストするためのテーブル
+--- 1. シンプルな親子関係(child → parent → grandparent)をテストするためのテーブル
+CREATE TABLE organizations (
+    id INT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+
 CREATE TABLE users (
     id INT PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP
+    organization_id INT,
+    created_at TIMESTAMP,
+    CONSTRAINT fk_organization_id FOREIGN KEY (organization_id) REFERENCES organizations(id)
 );
 CREATE TABLE posts (
     id INT PRIMARY KEY,
