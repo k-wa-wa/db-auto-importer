@@ -11,7 +11,7 @@ import (
 
 func Test_TopologicalSort(t *testing.T) {
 	t.Run("期待通りに並び替えられること・冪等性のある結果となること", func(t *testing.T) {
-		expected := []string{"products", "tags", "users", "product_tags", "posts"}
+		expected := []string{"organizations", "products", "tags", "users", "product_tags", "posts"}
 
 		for i := 0; i < 10; i++ {
 			sorted, err := NewGraph(common.ExpectedDBInfo).TopologicalSort()
