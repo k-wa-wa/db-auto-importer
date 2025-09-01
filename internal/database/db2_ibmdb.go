@@ -115,7 +115,7 @@ func (d *DB2DB) getColumnInfo(tableName, schemaName string) ([]ColumnInfo, error
 		isNullable := (isNullableStr == "Y") // DB2 uses 'Y' for nullable
 		columns = append(columns, ColumnInfo{
 			ColumnName:    colName,
-			DataType:      dataType,
+			DataType:      ParseDataType(dataType),
 			IsNullable:    isNullable,
 			ColumnDefault: colDefault,
 		})

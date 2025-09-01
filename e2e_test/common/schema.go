@@ -12,8 +12,8 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 		UniqueKeyColumns:  nil,
 		ForeignKeys:       nil,
 		Columns: []database.ColumnInfo{
-			{ColumnName: "id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "name", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "id", DataType: database.IntegerType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "name", DataType: database.StringType, IsNullable: false, ColumnDefault: sql.NullString{}},
 		},
 	},
 	"users": {
@@ -30,10 +30,10 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 			},
 		},
 		Columns: []database.ColumnInfo{
-			{ColumnName: "id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "name", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "organization_id", DataType: "integer", IsNullable: true, ColumnDefault: sql.NullString{}},
-			{ColumnName: "created_at", DataType: "timestamp without time zone", IsNullable: true, ColumnDefault: sql.NullString{}},
+			{ColumnName: "id", DataType: database.IntegerType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "name", DataType: database.StringType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "organization_id", DataType: database.IntegerType, IsNullable: true, ColumnDefault: sql.NullString{}},
+			{ColumnName: "created_at", DataType: database.TimestampType, IsNullable: true, ColumnDefault: sql.NullString{}},
 		},
 	},
 	"posts": {
@@ -50,11 +50,11 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 			},
 		},
 		Columns: []database.ColumnInfo{
-			{ColumnName: "id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "title", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "content", DataType: "text", IsNullable: true, ColumnDefault: sql.NullString{}},
-			{ColumnName: "user_id", DataType: "integer", IsNullable: true, ColumnDefault: sql.NullString{}},
-			{ColumnName: "published", DataType: "boolean", IsNullable: true, ColumnDefault: sql.NullString{}},
+			{ColumnName: "id", DataType: database.IntegerType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "title", DataType: database.StringType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "content", DataType: database.StringType, IsNullable: true, ColumnDefault: sql.NullString{}},
+			{ColumnName: "user_id", DataType: database.IntegerType, IsNullable: true, ColumnDefault: sql.NullString{}},
+			{ColumnName: "published", DataType: database.BooleanType, IsNullable: true, ColumnDefault: sql.NullString{}},
 		},
 	},
 	"products": {
@@ -63,9 +63,9 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 		UniqueKeyColumns:  [][]string{{"name"}},
 		ForeignKeys:       nil,
 		Columns: []database.ColumnInfo{
-			{ColumnName: "id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "name", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "price", DataType: "numeric", IsNullable: true, ColumnDefault: sql.NullString{}},
+			{ColumnName: "id", DataType: database.IntegerType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "name", DataType: database.StringType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "price", DataType: database.FloatType, IsNullable: true, ColumnDefault: sql.NullString{}},
 		},
 	},
 	"tags": {
@@ -74,8 +74,8 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 		UniqueKeyColumns:  [][]string{{"name"}},
 		ForeignKeys:       nil,
 		Columns: []database.ColumnInfo{
-			{ColumnName: "id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "name", DataType: "character varying", IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "id", DataType: database.IntegerType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "name", DataType: database.StringType, IsNullable: false, ColumnDefault: sql.NullString{}},
 		},
 	},
 	"product_tags": {
@@ -99,9 +99,9 @@ var ExpectedDBInfo = map[string]database.DBInfo{
 			},
 		},
 		Columns: []database.ColumnInfo{
-			{ColumnName: "product_id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "tag_id", DataType: "integer", IsNullable: false, ColumnDefault: sql.NullString{}},
-			{ColumnName: "created_at", DataType: "timestamp without time zone", IsNullable: true, ColumnDefault: sql.NullString{}},
+			{ColumnName: "product_id", DataType: database.IntegerType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "tag_id", DataType: database.IntegerType, IsNullable: false, ColumnDefault: sql.NullString{}},
+			{ColumnName: "created_at", DataType: database.TimestampType, IsNullable: true, ColumnDefault: sql.NullString{}},
 		},
 	},
 }

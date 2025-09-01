@@ -125,7 +125,7 @@ func (p *PostgresDB) getColumnInfo(tableName string) ([]ColumnInfo, error) {
 		isNullable := (isNullableStr == "YES")
 		columns = append(columns, ColumnInfo{
 			ColumnName:    colName,
-			DataType:      dataType,
+			DataType:      ParseDataType(dataType),
 			IsNullable:    isNullable,
 			ColumnDefault: colDefault,
 		})
