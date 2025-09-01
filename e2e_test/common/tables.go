@@ -1,6 +1,9 @@
 package common
 
-import "time"
+import (
+	"database/sql"
+	"time"
+)
 
 type User struct {
 	ID        int       `db:"id"`
@@ -17,9 +20,9 @@ type Post struct {
 }
 
 type Product struct {
-	ID    int     `db:"id"`
-	Name  string  `db:"name"`
-	Price float64 `db:"price"`
+	ID    int             `db:"id"`
+	Name  string          `db:"name"`
+	Price sql.NullFloat64 `db:"price"`
 }
 
 type Tag struct {

@@ -123,8 +123,9 @@ func Test_csvを正しくimportできること(t *testing.T) {
 
 	t.Run("productsが正しく作成されていること", func(t *testing.T) {
 		expectedProducts := []common.Product{
-			{ID: 1, Name: "Laptop", Price: 1200.00},
-			{ID: 2, Name: "Mouse", Price: 25.50},
+			{ID: 1, Name: "Laptop", Price: sql.NullFloat64{Valid: true, Float64: 1200.00}},
+			{ID: 2, Name: "Mouse", Price: sql.NullFloat64{Valid: true, Float64: 25.50}},
+			{ID: 3, Name: "---", Price: sql.NullFloat64{}}, // 自動で作成される。Nameはランダム生成されるため比較対象外とする
 		}
 
 		var actualProducts []common.Product
@@ -140,6 +141,7 @@ func Test_csvを正しくimportできること(t *testing.T) {
 		}
 		require.NoError(t, rows.Err())
 
+		actualProducts[2].Name = expectedProducts[2].Name // 自動生成のためdiffが出ないようにする
 		if diff := cmp.Diff(expectedProducts, actualProducts); diff != "" {
 			t.Errorf("diff: -want, +got:\n%s", diff)
 		}
@@ -149,6 +151,7 @@ func Test_csvを正しくimportできること(t *testing.T) {
 		expectedTags := []common.Tag{
 			{ID: 1, Name: "electronics"},
 			{ID: 2, Name: "computer"},
+			{ID: 3, Name: "---"}, // 自動で作成される。Nameはランダム生成されるため比較対象外とする
 		}
 
 		var actualTags []common.Tag
@@ -164,7 +167,15 @@ func Test_csvを正しくimportできること(t *testing.T) {
 		}
 		require.NoError(t, rows.Err())
 
-		if diff := cmp.Diff(expectedTags, actualTags); diff != "" {
+		actualTags[2].Name = expectedTags[2].Name // 自動生成のためdiffが出ないようにする
+		cmpOption := cmp.FilterValues(
+			func(x, y interface{}) bool {
+				tagX, okX := x.(common.Tag)
+				return okX && tagX.Name == "---"
+			},
+			cmp.Ignore(),
+		)
+		if diff := cmp.Diff(expectedTags, actualTags, cmpOption); diff != "" {
 			t.Errorf("diff: -want, +got:\n%s", diff)
 		}
 	})
@@ -174,6 +185,7 @@ func Test_csvを正しくimportできること(t *testing.T) {
 			{ProductID: 1, TagID: 1},
 			{ProductID: 1, TagID: 2},
 			{ProductID: 2, TagID: 1},
+			{ProductID: 3, TagID: 3},
 		}
 
 		var actualProductTags []common.ProductTag
