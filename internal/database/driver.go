@@ -22,6 +22,8 @@ func NewDBClient(dbType, connStr string) (DBClient, error) {
 		return NewPostgresDB(connStr)
 	case "db2":
 		return NewDB2Client(connStr)
+	case "mysql":
+		return NewMySQLDB(connStr)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", dbType)
 	}

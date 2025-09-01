@@ -81,7 +81,7 @@ func ParseDataType(dbType string) ColumnDataType {
 		return IntegerType
 	case "numeric", "decimal", "real", "double precision", "double", "decfloat", "float":
 		return FloatType
-	case "boolean", "bool":
+	case "boolean", "bool", "tinyint":
 		return BooleanType
 	case "date":
 		return DateType
