@@ -98,25 +98,49 @@ func Test_csvを正しくimportできること(t *testing.T) {
 
 	t.Run("userが正しく作成されていること", func(t *testing.T) {
 		expectedUsers := []common.User{
-			{ID: 1, Name: "Alice"},
-			{ID: 2, Name: "Bob"},
+			{ID: 1, Name: "Alice", OrganizationID: sql.NullInt16{Valid: true, Int16: 1}},
+			{ID: 2, Name: "Bob", OrganizationID: sql.NullInt16{Valid: true, Int16: 2}},
 			{ID: 3, Name: ""}, // 自動で作成される
 		}
 
 		var actualUsers []common.User
-		rows, err := db.Query("SELECT id, name FROM users ORDER BY id")
+		rows, err := db.Query("SELECT id, name, organization_id FROM users ORDER BY id")
 		require.NoError(t, err)
 		defer rows.Close()
 
 		for rows.Next() {
 			var u common.User
-			err := rows.Scan(&u.ID, &u.Name)
+			err := rows.Scan(&u.ID, &u.Name, &u.OrganizationID)
 			require.NoError(t, err)
 			actualUsers = append(actualUsers, u)
 		}
 		require.NoError(t, rows.Err())
 
 		if diff := cmp.Diff(expectedUsers, actualUsers); diff != "" {
+			t.Errorf("diff: -want, +got:\n%s", diff)
+		}
+	})
+
+	t.Run("organizationsが正しく作成されていること", func(t *testing.T) {
+		expectedOrganizations := []common.Organization{
+			{ID: 1, Name: "Organization A"},
+			{ID: 2, Name: ""},
+		}
+
+		var actualOrganizations []common.Organization
+		rows, err := db.Query("SELECT id, name FROM organizations ORDER BY id")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		for rows.Next() {
+			var o common.Organization
+			err := rows.Scan(&o.ID, &o.Name)
+			require.NoError(t, err)
+			actualOrganizations = append(actualOrganizations, o)
+		}
+		require.NoError(t, rows.Err())
+
+		if diff := cmp.Diff(expectedOrganizations, actualOrganizations); diff != "" {
 			t.Errorf("diff: -want, +got:\n%s", diff)
 		}
 	})

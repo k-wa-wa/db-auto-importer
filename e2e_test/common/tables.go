@@ -11,10 +11,10 @@ type Organization struct {
 }
 
 type User struct {
-	ID             int       `db:"id"`
-	Name           string    `db:"name"`
-	OrganizationID int       `db:"organization_id"`
-	CreatedAt      time.Time `db:"created_at"`
+	ID             int           `db:"id"`
+	Name           string        `db:"name"`
+	OrganizationID sql.NullInt16 `db:"organization_id"`
+	CreatedAt      time.Time     `db:"created_at"`
 }
 
 type Post struct {
