@@ -70,6 +70,32 @@ func Test_csvを正しくimportできること(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	t.Run("postsが正しく作成されていること", func(t *testing.T) {
+		expectedPosts := []common.Post{
+			{ID: 1, Title: "First Post", UserID: 1},
+			{ID: 2, Title: "Goについて", UserID: 1},
+			{ID: 3, Title: "My Daily Life", UserID: 2},
+			{ID: 4, Title: "AAA", UserID: 3},
+		}
+
+		var actualPosts []common.Post
+		rows, err := db.Query("SELECT id, title, user_id FROM posts ORDER BY id")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		for rows.Next() {
+			var p common.Post
+			err := rows.Scan(&p.ID, &p.Title, &p.UserID)
+			require.NoError(t, err)
+			actualPosts = append(actualPosts, p)
+		}
+		require.NoError(t, rows.Err())
+
+		if diff := cmp.Diff(expectedPosts, actualPosts); diff != "" {
+			t.Errorf("diff: -want, +got:\n%s", diff)
+		}
+	})
+
 	t.Run("userが正しく作成されていること", func(t *testing.T) {
 		expectedUsers := []common.User{
 			{ID: 1, Name: "Alice"},
@@ -91,6 +117,79 @@ func Test_csvを正しくimportできること(t *testing.T) {
 		require.NoError(t, rows.Err())
 
 		if diff := cmp.Diff(expectedUsers, actualUsers); diff != "" {
+			t.Errorf("diff: -want, +got:\n%s", diff)
+		}
+	})
+
+	t.Run("productsが正しく作成されていること", func(t *testing.T) {
+		expectedProducts := []common.Product{
+			{ID: 1, Name: "Product A", Price: 10.50},
+			{ID: 2, Name: "Product B", Price: 20.00},
+		}
+
+		var actualProducts []common.Product
+		rows, err := db.Query("SELECT id, name, price FROM products ORDER BY id")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		for rows.Next() {
+			var p common.Product
+			err := rows.Scan(&p.ID, &p.Name, &p.Price)
+			require.NoError(t, err)
+			actualProducts = append(actualProducts, p)
+		}
+		require.NoError(t, rows.Err())
+
+		if diff := cmp.Diff(expectedProducts, actualProducts); diff != "" {
+			t.Errorf("diff: -want, +got:\n%s", diff)
+		}
+	})
+
+	t.Run("tagsが正しく作成されていること", func(t *testing.T) {
+		expectedTags := []common.Tag{
+			{ID: 1, Name: "Tag1"},
+			{ID: 2, Name: "Tag2"},
+		}
+
+		var actualTags []common.Tag
+		rows, err := db.Query("SELECT id, name FROM tags ORDER BY id")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		for rows.Next() {
+			var tag common.Tag
+			err := rows.Scan(&tag.ID, &tag.Name)
+			require.NoError(t, err)
+			actualTags = append(actualTags, tag)
+		}
+		require.NoError(t, rows.Err())
+
+		if diff := cmp.Diff(expectedTags, actualTags); diff != "" {
+			t.Errorf("diff: -want, +got:\n%s", diff)
+		}
+	})
+
+	t.Run("product_tagsが正しく作成されていること", func(t *testing.T) {
+		expectedProductTags := []common.ProductTag{
+			{ProductID: 1, TagID: 1},
+			{ProductID: 1, TagID: 2},
+			{ProductID: 2, TagID: 1},
+		}
+
+		var actualProductTags []common.ProductTag
+		rows, err := db.Query("SELECT product_id, tag_id FROM product_tags ORDER BY product_id, tag_id")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		for rows.Next() {
+			var pt common.ProductTag
+			err := rows.Scan(&pt.ProductID, &pt.TagID)
+			require.NoError(t, err)
+			actualProductTags = append(actualProductTags, pt)
+		}
+		require.NoError(t, rows.Err())
+
+		if diff := cmp.Diff(expectedProductTags, actualProductTags); diff != "" {
 			t.Errorf("diff: -want, +got:\n%s", diff)
 		}
 	})
