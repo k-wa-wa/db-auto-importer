@@ -52,28 +52,28 @@ func (i *Importer) ImportCSVFiles(csvDir string, hasHeader bool) error {
 		return fmt.Errorf("failed to determine import order: %w", err)
 	}
 
-	fmt.Printf("Determined import order: %v\n", importOrder)
+	log.Printf("Determined import order: %v\n", importOrder)
 
 	for _, tableName := range importOrder {
 		filePath, ok := csvFilesMap[tableName]
 		if !ok {
-			fmt.Printf("Skipping table %s: no corresponding CSV file found.\n", tableName)
+			log.Printf("Skipping table %s: no corresponding CSV file found.\n", tableName)
 			continue
 		}
 
 		dbInfo, ok := i.DBSchema[tableName]
 		if !ok {
 			// This should ideally not happen if schemaInfo is consistent with graph nodes
-			fmt.Printf("Skipping table %s: no corresponding table found in database schema info.\n", tableName)
+			log.Printf("Skipping table %s: no corresponding table found in database schema info.\n", tableName)
 			continue
 		}
 
-		fmt.Printf("Importing data from %s into table %s...\n", filePath, tableName)
+		log.Printf("Importing data from %s into table %s...\n", filePath, tableName)
 		// Pass the hasHeader flag directly to ImportSingleCSV
 		if err := i.ImportSingleCSV(filePath, dbInfo, hasHeader); err != nil {
 			return fmt.Errorf("failed to import %s: %w", filePath, err)
 		}
-		fmt.Printf("Finished importing %s.\n", filePath)
+		log.Printf("Finished importing %s.\n", filePath)
 	}
 
 	return nil
@@ -108,7 +108,7 @@ func (i *Importer) ImportSingleCSV(filePath string, dbInfo database.DBInfo, hasH
 				}
 			}
 			if !found {
-				fmt.Printf("Warning: Column '%s' in table '%s' not found in CSV header. Will use default/null.\n", colInfo.ColumnName, dbInfo.TableName)
+				log.Printf("Warning: Column '%s' in table '%s' not found in CSV header. Will use default/null.\n", colInfo.ColumnName, dbInfo.TableName)
 			}
 		}
 	} else {

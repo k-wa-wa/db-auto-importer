@@ -4,6 +4,7 @@ import (
 	"db-auto-importer/internal/database"
 	"db-auto-importer/internal/importer"
 	"fmt"
+	"log"
 )
 
 func RunApp(dbType, dbConnStr, csvDir string, hasHeader bool, dbSchemaName string) error {
@@ -19,7 +20,7 @@ func RunApp(dbType, dbConnStr, csvDir string, hasHeader bool, dbSchemaName strin
 	if err != nil {
 		return fmt.Errorf("error getting database schema info: %w", err)
 	}
-	fmt.Println("Database schema information retrieved successfully.")
+	log.Println("Database schema information retrieved successfully.")
 
 	// 2. CSV Parsing and Data Import
 	importer, err := importer.NewImporter(schemaInfo, dbClient)

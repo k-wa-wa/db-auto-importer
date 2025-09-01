@@ -3,13 +3,12 @@ package main
 import (
 	"db-auto-importer/internal/app" // Import the new app package
 	"flag"
-	"fmt"
 	"log"
 	"os"
 )
 
 func main() {
-	fmt.Println("db-auto-importer started.")
+	log.Println("db-auto-importer started.")
 
 	// Define command-line flags
 	dbType := flag.String("db-type", "postgres", "Database type (e.g., 'postgres', 'db2')")
@@ -23,6 +22,6 @@ func main() {
 		log.Fatalf("Error running application: %v", err)
 	}
 
-	fmt.Println("db-auto-importer finished successfully.")
+	log.Println("db-auto-importer finished successfully.")
 	os.Exit(0)
 }
