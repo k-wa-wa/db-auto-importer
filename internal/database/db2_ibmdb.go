@@ -220,7 +220,7 @@ func (d *DB2DB) getForeignKeyInfo(tableName, schemaName string) ([]ForeignKeyInf
 	return fks, nil
 }
 
-// PrepareInsertStatement prepares an INSERT statement for DB2.
+// PrepareInsertStatement prepares an UPSERT (MERGE) statement for DB2.
 func (d *DB2DB) PrepareInsertStatement(dbInfo DBInfo) (*sql.Stmt, error) {
 	var cols []string
 	var placeholders []string
@@ -229,74 +229,67 @@ func (d *DB2DB) PrepareInsertStatement(dbInfo DBInfo) (*sql.Stmt, error) {
 		placeholders = append(placeholders, "?") // DB2 uses '?' for placeholders
 	}
 
-	// DB2 does not have a direct equivalent to PostgreSQL's ON CONFLICT clause.
-	// A common approach is to attempt an INSERT and handle duplicates, or
-	// check for existence first, then INSERT or UPDATE.
-	// For simplicity, we'll use a simple INSERT here. If a primary key conflict occurs,
-	// the DB2 driver will return an error, which the importer will log and skip.
+	// If no primary keys are defined, we cannot perform an upsert.
+	// In this case, we fall back to a simple INSERT.
+	if len(dbInfo.PrimaryKeyColumns) == 0 {
+		query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+			dbInfo.TableName,
+			strings.Join(cols, ", "),
+			strings.Join(placeholders, ", "),
+		)
+		stmt, err := d.db.Prepare(query)
+		if err != nil {
+			return nil, fmt.Errorf("failed to prepare INSERT statement (no primary keys): %w", err)
+		}
+		return stmt, nil
+	}
+
+	// Construct the MERGE statement for upsert
+	var mergeOnClauses []string
+	for _, pkCol := range dbInfo.PrimaryKeyColumns {
+		mergeOnClauses = append(mergeOnClauses, fmt.Sprintf("T.%s = S.%s", pkCol, pkCol))
+	}
+
+	var updateSetClauses []string
+	var insertCols []string
+	var insertValuesFromSource []string
 	pkMap := make(map[string]bool)
 	for _, pkCol := range dbInfo.PrimaryKeyColumns {
 		pkMap[pkCol] = true
 	}
 
-	var query string
-	if len(dbInfo.PrimaryKeyColumns) > 0 {
-		var updateClauses []string
-		var insertCols []string
-		var insertPlaceholders []string
-		var mergeSourceCols []string
-
-		for _, colInfo := range dbInfo.Columns {
-			mergeSourceCols = append(mergeSourceCols, fmt.Sprintf("? AS %s", colInfo.ColumnName))
-			insertCols = append(insertCols, colInfo.ColumnName)
-			insertPlaceholders = append(insertPlaceholders, "?")
-			if !pkMap[colInfo.ColumnName] {
-				updateClauses = append(updateClauses, fmt.Sprintf("T.%s = S.%s", colInfo.ColumnName, colInfo.ColumnName))
-			}
+	for _, colInfo := range dbInfo.Columns {
+		insertCols = append(insertCols, colInfo.ColumnName)
+		insertValuesFromSource = append(insertValuesFromSource, fmt.Sprintf("S.%s", colInfo.ColumnName))
+		if !pkMap[colInfo.ColumnName] {
+			updateSetClauses = append(updateSetClauses, fmt.Sprintf("T.%s = S.%s", colInfo.ColumnName, colInfo.ColumnName))
 		}
-
-		// Construct the MERGE statement
-		// DB2 MERGE statement requires a source table. We can use VALUES clause for this.
-		// The number of placeholders in the VALUES clause will be equal to the number of columns.
-		// The number of placeholders in the INSERT part will also be equal to the number of columns.
-		// So, total placeholders will be 2 * len(dbInfo.Columns).
-		// However, the go_ibm_db driver handles parameters for MERGE statements by mapping them
-		// to the order they appear in the USING clause and then in the WHEN MATCHED/NOT MATCHED clauses.
-		// For simplicity and to match the existing pattern of passing all values once,
-		// we'll use a structure that allows for a single set of parameters.
-
-		// A more direct approach for DB2 UPSERT without a complex MERGE statement
-		// that requires re-ordering parameters for the driver is to use a stored procedure
-		// or a conditional INSERT/UPDATE. Given the current structure, a simple INSERT
-		// with error handling for duplicates is often used if a full MERGE is too complex
-		// to parameterize correctly with the driver.
-
-		// Let's stick to the simple INSERT for now, as the comment suggests,
-		// and revisit if a more robust UPSERT is strictly required and can be
-		// implemented cleanly with the go_ibm_db driver's parameter handling for MERGE.
-		// The current comment already acknowledges this limitation.
-		// For now, I will ensure the comment is accurate and reflects the decision.
-
-		// Reverting to the original simple INSERT for now, as a robust MERGE
-		// implementation with the current driver's parameter handling for MERGE
-		// is non-trivial and might require a different approach (e.g., stored procedure).
-		// The existing comment already explains this limitation.
-		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			dbInfo.TableName,
-			strings.Join(cols, ", "),
-			strings.Join(placeholders, ", "),
-		)
-	} else {
-		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			dbInfo.TableName,
-			strings.Join(cols, ", "),
-			strings.Join(placeholders, ", "),
-		)
 	}
+
+	// The VALUES clause in the USING part will have one placeholder for each column.
+	// The parameters for the prepared statement will correspond to these values.
+	// The WHEN MATCHED and WHEN NOT MATCHED clauses will refer to these source values (S.<colname>).
+	query := fmt.Sprintf(`
+		MERGE INTO %s AS T
+		USING (VALUES (%s)) AS S (%s)
+		ON (%s)
+		WHEN MATCHED THEN
+			UPDATE SET %s
+		WHEN NOT MATCHED THEN
+			INSERT (%s) VALUES (%s)
+	`,
+		dbInfo.TableName,
+		strings.Join(placeholders, ", "), // Placeholders for the VALUES clause
+		strings.Join(cols, ", "),         // Column names for the VALUES clause
+		strings.Join(mergeOnClauses, " AND "),
+		strings.Join(updateSetClauses, ", "),
+		strings.Join(insertCols, ", "),
+		strings.Join(insertValuesFromSource, ", "),
+	)
 
 	stmt, err := d.db.Prepare(query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to prepare statement: %w", err)
+		return nil, fmt.Errorf("failed to prepare MERGE statement: %w", err)
 	}
 	return stmt, nil
 }
