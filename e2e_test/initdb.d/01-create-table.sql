@@ -1,5 +1,5 @@
 
---- 1. シンプルな親子関係(child → parent → grandparent)をテストするためのテーブル
+-- 1. シンプルな親子関係(child → parent → grandparent)をテストするためのテーブル
 CREATE TABLE organizations (
     id INT PRIMARY KEY,
     name VARCHAR(255) NOT NULL
